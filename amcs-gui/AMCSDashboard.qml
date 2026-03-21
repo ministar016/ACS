@@ -68,6 +68,7 @@ ApplicationWindow {
     property var  targetData:   ({lat: 42.829, lon: 20.363, alive: true})
     property int  threatLevel:  0
     property real simTime:      0.0
+    readonly property string mapCenterStr: "42.830°N / 20.350°E"
 
     Connections {
         target: simBus
@@ -245,10 +246,30 @@ ApplicationWindow {
                     color: "transparent"
                     RowLayout {
                         anchors { fill: parent; leftMargin: 10; rightMargin: 10 }
-                        Text { text: "BATTLEFIELD MAP  —  ZONE-BRAVO  (30 × 3 km corridor)"
+                        Text { text: "BATTLEFIELD MAP  —  ZONE-BRAVO  (30 × 3 km)"
                                color: root.c_dim; font { pixelSize: 10; family: "monospace" } }
                         Item { Layout.fillWidth: true }
-                        Text { text: "Center: 42.830°N / 20.350°E   |   Proj: WGS-84"
+
+                        // Map type toggle buttons
+                        Repeater {
+                            model: ["SAT", "TOPO", "OSM"]
+                            Rectangle {
+                                required property string modelData
+                                width: 36; height: 18; radius: 3
+                                color: mapCanvas.mapType === modelData.toLowerCase() ? root.c_accent : "#1E3550"
+                                border.color: mapCanvas.mapType === modelData.toLowerCase() ? root.c_accent : "#2E4560"
+                                Text { anchors.centerIn: parent; text: modelData
+                                       color: "#FFFFFF"; font { pixelSize: 9; bold: true } }
+                                TapHandler {
+                                    onTapped: {
+                                        mapCanvas.mapType = modelData.toLowerCase()
+                                        mapCanvas.requestPaint()
+                                    }
+                                }
+                            }
+                        }
+
+                        Text { text: "  " + root.mapCenterStr + "  z" + mapCanvas.tileZoom
                                color: root.c_dim; font { pixelSize: 10; family: "monospace" } }
                     }
                 }
@@ -257,76 +278,86 @@ ApplicationWindow {
                     id: mapCanvas
                     anchors { fill: parent; topMargin: 28 }
 
-                    // Coordinate bounds (display area, slightly larger than corridor)
-                    property real lonMin: 20.12
-                    property real lonMax: 20.57
-                    property real latMin: 42.808
-                    property real latMax: 42.856
+                    // ── Map tile configuration ────────────────────────
+                    property real   mapCenterLat: 42.830
+                    property real   mapCenterLon: 20.350
+                    property int    tileZoom:     13      // ~14 m/px at this lat
+                    property int    tileSize:     256
+                    property string mapType:      "satellite"  // satellite | topo | osm
 
-                    // ── Coordinate helpers ────────────────────────
+                    onImageLoaded: requestPaint()
+
+                    // ── Web Mercator tile helpers ─────────────────────
+                    function _lonToTf(lon) {
+                        return (lon + 180) / 360 * Math.pow(2, tileZoom)
+                    }
+                    function _latToTf(lat) {
+                        var r = lat * Math.PI / 180
+                        return (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2
+                               * Math.pow(2, tileZoom)
+                    }
+
+                    // ── Screen coordinate helpers ─────────────────────
                     function lonToX(lon) {
-                        return (lon - lonMin) / (lonMax - lonMin) * width
+                        return (_lonToTf(lon) - _lonToTf(mapCenterLon)) * tileSize + width  / 2
                     }
                     function latToY(lat) {
-                        return (1.0 - (lat - latMin) / (latMax - latMin)) * height
+                        return (_latToTf(lat) - _latToTf(mapCenterLat)) * tileSize + height / 2
                     }
 
-                    // ── Drawing helpers ───────────────────────────
+                    // ── Text label with shadow ────────────────────────
                     function lbl(ctx, text, x, y, color) {
                         ctx.font = "bold 9px sans-serif"
-                        ctx.fillStyle = "rgba(0,0,0,0.55)"
+                        ctx.fillStyle = "rgba(0,0,0,0.75)"
                         ctx.fillText(text, x+1, y+1)
                         ctx.fillStyle = color
                         ctx.fillText(text, x, y)
                     }
 
-                    function drawGrid(ctx) {
-                        ctx.strokeStyle = "rgba(36, 113, 163, 0.18)"
-                        ctx.lineWidth = 0.8
-                        var lon = 20.15
-                        while (lon <= lonMax) {
-                            var gx = lonToX(lon)
-                            ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, height); ctx.stroke()
-                            lon = Math.round((lon + 0.05) * 1000) / 1000
-                        }
-                        var lat = 42.810
-                        while (lat <= latMax) {
-                            var gy = latToY(lat)
-                            ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(width, gy); ctx.stroke()
-                            lat = Math.round((lat + 0.005) * 10000) / 10000
+                    // ── Tile URL ──────────────────────────────────────
+                    function tileUrl(tx, ty, z) {
+                        if (mapType === "satellite")
+                            return "https://server.arcgisonline.com/ArcGIS/rest/services/" +
+                                   "World_Imagery/MapServer/tile/" + z + "/" + ty + "/" + tx
+                        if (mapType === "topo")
+                            return "https://tile.opentopomap.org/" + z + "/" + tx + "/" + ty + ".png"
+                        return "https://tile.openstreetmap.org/" + z + "/" + tx + "/" + ty + ".png"
+                    }
+
+                    // ── Draw map tiles ────────────────────────────────
+                    function drawTiles(ctx) {
+                        var cTX  = _lonToTf(mapCenterLon)
+                        var cTY  = _latToTf(mapCenterLat)
+                        var nX   = Math.ceil(width  / (2 * tileSize)) + 1
+                        var nY   = Math.ceil(height / (2 * tileSize)) + 1
+                        var maxT = Math.pow(2, tileZoom) - 1
+
+                        for (var ty = Math.floor(cTY) - nY; ty <= Math.floor(cTY) + nY; ty++) {
+                            for (var tx = Math.floor(cTX) - nX; tx <= Math.floor(cTX) + nX; tx++) {
+                                if (tx < 0 || ty < 0 || tx > maxT || ty > maxT) continue
+                                var url = tileUrl(tx, ty, tileZoom)
+                                var px  = (tx - cTX) * tileSize + width  / 2
+                                var py  = (ty - cTY) * tileSize + height / 2
+                                if (isImageLoaded(url))
+                                    ctx.drawImage(url, px, py, tileSize, tileSize)
+                                else
+                                    loadImage(url)
+                            }
                         }
                     }
 
-                    function drawCoordLabels(ctx) {
-                        ctx.font = "8px monospace"
-                        ctx.fillStyle = "rgba(120,153,170,0.65)"
-                        var lon = 20.15
-                        while (lon <= lonMax - 0.01) {
-                            var lx = lonToX(lon)
-                            if (lx > 20 && lx < width - 20)
-                                ctx.fillText(lon.toFixed(2), lx - 12, height - 6)
-                            lon = Math.round((lon + 0.05) * 1000) / 1000
-                        }
-                        var lat = 42.810
-                        while (lat <= latMax - 0.003) {
-                            var ly = latToY(lat)
-                            if (ly > 12 && ly < height - 12)
-                                ctx.fillText(lat.toFixed(3), 4, ly + 3)
-                            lat = Math.round((lat + 0.005) * 10000) / 10000
-                        }
-                    }
-
+                    // ── Tactical overlay: corridor boundary ───────────
                     function drawCorridor(ctx) {
                         var x0 = lonToX(20.166), y0 = latToY(42.843)
                         var x1 = lonToX(20.534), y1 = latToY(42.817)
-                        ctx.fillStyle = "rgba(15, 33, 51, 0.9)"
+                        ctx.fillStyle = "rgba(36, 113, 163, 0.07)"
                         ctx.fillRect(x0, y0, x1-x0, y1-y0)
-                        ctx.setLineDash([6, 4])
-                        ctx.strokeStyle = "rgba(36, 113, 163, 0.7)"
-                        ctx.lineWidth = 1.5
+                        ctx.setLineDash([8, 4])
+                        ctx.strokeStyle = "rgba(100, 180, 255, 0.85)"
+                        ctx.lineWidth = 2
                         ctx.strokeRect(x0, y0, x1-x0, y1-y0)
                         ctx.setLineDash([])
-                        lbl(ctx, "ZONE-BRAVO", x0+6, y0+12, "#5B8DB8")
+                        lbl(ctx, "ZONE-BRAVO", x0+8, y0+14, "#90CAF9")
                     }
 
                     function drawUAV(ctx, lat, lon, label) {
@@ -512,17 +543,16 @@ ApplicationWindow {
                     }
 
                     function drawScaleBar(ctx) {
-                        // 5 km scale bar
-                        var km5_deg = 5 / 81.74   // degrees lon for 5 km at lat 42.83
-                        var barW = km5_deg / (lonMax - lonMin) * width
+                        // Derive bar width from projection (5 km east of centre)
+                        var lon2 = mapCenterLon + 5.0 / (111.32 * Math.cos(mapCenterLat * Math.PI / 180))
+                        var barW = lonToX(lon2) - lonToX(mapCenterLon)
                         var bx = 50, by = height - 24
-                        ctx.fillStyle = "#FFFFFF"; ctx.fillRect(bx, by, barW, 4)
-                        ctx.fillRect(bx + barW, by, barW, 4)
-                        ctx.fillStyle = "#7899AA"
-                        ctx.font = "8px monospace"
-                        ctx.fillText("0", bx-4, by+14)
-                        ctx.fillText("5 km", bx+barW-8, by+14)
-                        ctx.fillText("10 km", bx+barW*2-10, by+14)
+                        ctx.fillStyle = "#FFFFFF"; ctx.fillRect(bx,        by, barW, 4)
+                        ctx.fillStyle = "#555555"; ctx.fillRect(bx + barW, by, barW, 4)
+                        ctx.font = "8px monospace"; ctx.fillStyle = "#E0E0E0"
+                        ctx.fillText("0",     bx - 4,       by + 14)
+                        ctx.fillText("5 km",  bx + barW - 8, by + 14)
+                        ctx.fillText("10 km", bx + barW*2-10, by + 14)
                     }
 
                     function drawNorth(ctx) {
@@ -539,12 +569,11 @@ ApplicationWindow {
                         var ctx = getContext("2d")
                         ctx.clearRect(0, 0, width, height)
 
-                        // Background
-                        ctx.fillStyle = "#08111C"
+                        // Fallback while tiles load
+                        ctx.fillStyle = "#1A2A3A"
                         ctx.fillRect(0, 0, width, height)
 
-                        drawGrid(ctx)
-                        drawCoordLabels(ctx)
+                        drawTiles(ctx)
                         drawCorridor(ctx)
 
                         // Acoustic — highlight when actively detecting
