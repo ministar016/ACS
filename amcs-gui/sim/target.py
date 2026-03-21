@@ -1,12 +1,12 @@
 """
-FakeTarget — simulates an enemy ground vehicle moving through the corridor.
+FakeTarget — simulates a hostile drone flying through the corridor.
 
 Trajectory:
-  Start  : (42.829°N, 20.363°E)  heading 200°  speed 15 km/h
-  Reaches intercept zone (42.827°N, 20.355°E) in ~3 min at current speed.
+  Start  : (42.829°N, 20.520°E)  heading 270° (due west)  altitude 100 m  speed 120 km/h
+  Enters from eastern corridor boundary and traverses ~30 km west (~14 min at cruise).
 
-The target drives in a roughly straight line with slight random walk noise
-to simulate road irregularities / evasive movement.
+The drone holds a roughly straight course with small random-walk noise;
+heading is more stable than a ground vehicle (no road constraint).
 """
 from __future__ import annotations
 import math
@@ -54,28 +54,29 @@ def _move(lat: float, lon: float, heading_deg: float, distance_m: float) -> tupl
 
 class FakeTarget:
     """
-    Simulated enemy ground vehicle.
+    Simulated hostile drone.
 
     Attributes
     ----------
-    position    : current GeoCoord (ground truth)
+    position    : current GeoCoord (ground truth, includes altitude)
     velocity    : current Velocity
-    alive       : False once the target exits the corridor or is intercepted
+    alive       : False once the target exits the corridor
     """
 
-    # Initial state (from object diagram)
+    # Initial state
     _START_LAT  =  42.829
-    _START_LON  =  20.363
-    _SPEED_MS   =  15.0 / 3.6      # 15 km/h → m/s
-    _HEADING    =  200.0            # degrees  (roughly SSW)
+    _START_LON  =  20.520          # enters from eastern corridor boundary
+    _ALTITUDE_M =  100.0           # AGL cruise altitude
+    _SPEED_MS   =  120.0 / 3.6    # 120 km/h → 33.3 m/s
+    _HEADING    =  270.0           # due west — flies along corridor length
 
     # Corridor bounds — target becomes "exited" when outside
     _LAT_MIN, _LAT_MAX = 42.817, 42.843
     _LON_MIN, _LON_MAX = 20.166, 20.534
 
-    # Slight random-walk jitter parameters
-    _BEARING_NOISE_STD  = 3.0       # deg σ per tick
-    _SPEED_NOISE_STD    = 0.3       # m/s σ per tick
+    # Random-walk jitter (drone is more stable than a ground vehicle)
+    _BEARING_NOISE_STD  = 1.0       # deg σ per tick
+    _SPEED_NOISE_STD    = 0.5       # m/s σ per tick
 
     def __init__(self, dt: float = 0.1, seed: int = 42) -> None:
         self._dt  = dt
@@ -94,7 +95,7 @@ class FakeTarget:
 
     @property
     def position(self) -> GeoCoord:
-        return GeoCoord(self._lat, self._lon, 0.0)
+        return GeoCoord(self._lat, self._lon, self._ALTITUDE_M)
 
     @property
     def velocity(self) -> Velocity:
@@ -113,9 +114,9 @@ class FakeTarget:
         h_noise = self._rng.gauss(0.0, self._BEARING_NOISE_STD)
         self._heading = (self._heading + h_noise) % 360
 
-        # Slight speed variation
+        # Slight speed variation (stays within realistic drone envelope)
         s_noise = self._rng.gauss(0.0, self._SPEED_NOISE_STD)
-        self._speed = max(1.0, self._speed + s_noise)
+        self._speed = max(20.0, min(50.0, self._speed + s_noise))
 
         # Move
         dist_m = self._speed * self._dt
