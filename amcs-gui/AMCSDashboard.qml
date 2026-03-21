@@ -59,7 +59,28 @@ ApplicationWindow {
         }
     }
 
-    // ── Root layout ───────────────────────────────────────────────
+    // ── Live simulation data ───────────────────────────────────────────
+    property var  uavData:      null
+    property var  ugvData:      null
+    property var  acousticData: []
+    property var  seismicData:  []
+    property var  trackData:    []
+    property var  targetData:   ({lat: 42.829, lon: 20.363, alive: true})
+    property int  threatLevel:  0
+    property real simTime:      0.0
+
+    Connections {
+        target: simBus
+        function onUavUpdated(data)      { root.uavData = data;  root.simTime = data.timestamp }
+        function onUgvUpdated(data)      { root.ugvData = data }
+        function onAcousticUpdated(data) { root.acousticData = data }
+        function onSeismicUpdated(data)  { root.seismicData  = data }
+        function onTracksUpdated(data)   { root.trackData = data }
+        function onThreatUpdated(level)  { root.threatLevel = level }
+        function onTargetUpdated(data)   { root.targetData = data; mapCanvas.requestPaint() }
+    }
+
+
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
@@ -93,7 +114,14 @@ ApplicationWindow {
                     TopChip { label: "ZONE";     value: "ZONE-BRAVO" }
                     TopChip { label: "STATUS";   value: "● ACTIVE";
                                valueColor: root.c_active }
-                    TopChip { label: "CORRIDOR"; value: "42.817–42.843°N / 20.166–20.534°E" }
+                    TopChip { label: "T+";
+                               value: root.simTime.toFixed(1) + " s"
+                               valueColor: root.c_warn }
+                    TopChip { label: "THREAT";
+                               value: ["NONE","LOW","MEDIUM","HIGH"][root.threatLevel] || "NONE"
+                               valueColor: root.threatLevel >= 3 ? root.c_armed :
+                                           root.threatLevel >= 2 ? root.c_deploy :
+                                           root.threatLevel >= 1 ? root.c_warn  : root.c_dim }
                 }
 
                 Item { Layout.fillWidth: true }
@@ -136,17 +164,36 @@ ApplicationWindow {
 
                         DeviceCard {
                             name: "UAV-ALPHA-001"; role: "PVO DRONE"
-                            statusText: "DEPLOYED"; statusColor: root.c_active
-                            accentColor: root.c_uav; battery: 78.5
-                            detail1: "Alt: 150 m  |  Hdg: 270°"
-                            detail2: "Speed: 65 km/h  |  Radar+Cam"
+                            accentColor: root.c_uav
+                            statusText: root.uavData ? root.uavData.status : "DEPLOYED"
+                            statusColor: root.uavData && root.uavData.status === "DEPLOYED"
+                                         ? root.c_active : root.c_deploy
+                            battery:    root.uavData ? root.uavData.batteryPct : 78.5
+                            detail1: root.uavData ?
+                                ("Alt: " + root.uavData.altitudeM.toFixed(0) + " m  |  Hdg: " +
+                                 root.uavData.headingDeg.toFixed(0) + "°") :
+                                "Alt: 150 m  |  Hdg: 270°"
+                            detail2: root.uavData && root.uavData.radar && root.uavData.radar.detected ?
+                                ("● RADAR  " + root.uavData.radar.distanceM.toFixed(0) + " m  " +
+                                 (root.uavData.radar.velocity > 0 ? "↓" : "↑") +
+                                 Math.abs(root.uavData.radar.velocity).toFixed(1) + " m/s") :
+                                "Radar+Cam  |  Scanning…"
                         }
                         DeviceCard {
                             name: "UGV-BRAVO-002"; role: "GROUND INTERCEPT"
-                            statusText: "DEPLOYING"; statusColor: root.c_deploy
-                            accentColor: root.c_ugv; battery: 92.3
-                            detail1: "Speed: 25 km/h  |  Rugged"
-                            detail2: "Radar+Cam  |  Intercept ACT-001"
+                            accentColor: root.c_ugv
+                            statusText: root.ugvData ? root.ugvData.status : "DEPLOYING"
+                            statusColor: root.ugvData && root.ugvData.status === "DEPLOYED"
+                                         ? root.c_active : root.c_deploy
+                            battery:    root.ugvData ? root.ugvData.batteryPct : 92.3
+                            detail1: root.ugvData ?
+                                ("Spd: " + (root.ugvData.speedMs * 3.6).toFixed(0) + " km/h  |  " +
+                                 root.ugvData.terrainMode) :
+                                "Speed: 25 km/h  |  Rugged"
+                            detail2: root.ugvData && root.ugvData.radar && root.ugvData.radar.detected ?
+                                ("● RADAR  " + root.ugvData.radar.distanceM.toFixed(0) + " m  conf:" +
+                                 (root.ugvData.radar.confidence * 100).toFixed(0) + "%") :
+                                "Radar+Cam  |  Intercept ACT-001"
                         }
 
                         // ── Air Defence ───────────────────────────
@@ -314,27 +361,55 @@ ApplicationWindow {
                         lbl(ctx, label, x+16, y+4, "#A5D6A7")
                     }
 
-                    function drawAcoustic(ctx, lat, lon, label) {
+                    function drawAcoustic(ctx, lat, lon, label, detected) {
                         var x = lonToX(lon), y = latToY(lat)
+                        if (detected) {
+                            // Detection glow ring
+                            ctx.beginPath(); ctx.arc(x, y, 18, 0, Math.PI*2)
+                            ctx.strokeStyle = "rgba(249,168,37,0.5)"; ctx.lineWidth = 3; ctx.stroke()
+                        }
                         for (var i = 2; i >= 1; i--) {
                             ctx.beginPath(); ctx.arc(x, y, 6 + i*5, -Math.PI*0.6, Math.PI*0.6)
-                            ctx.strokeStyle = "rgba(249,168,37,0.3)"; ctx.lineWidth = 1.5; ctx.stroke()
+                            var alpha = detected ? "0.7" : "0.3"
+                            ctx.strokeStyle = "rgba(249,168,37," + alpha + ")"; ctx.lineWidth = 1.5; ctx.stroke()
                         }
                         ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI*2)
-                        ctx.fillStyle = "#FFF9C4"; ctx.strokeStyle = "#F9A825"; ctx.lineWidth = 2
+                        ctx.fillStyle = detected ? "#FFD54F" : "#FFF9C4"
+                        ctx.strokeStyle = "#F9A825"; ctx.lineWidth = 2
                         ctx.fill(); ctx.stroke()
-                        lbl(ctx, label, x+10, y+4, "#FFF9C4")
+                        lbl(ctx, label, x+10, y+4, detected ? "#FFD54F" : "#FFF9C4")
                     }
 
-                    function drawSeismic(ctx, lat, lon, label) {
+                    function drawSeismic(ctx, lat, lon, label, detected) {
                         var x = lonToX(lon), y = latToY(lat), r = 7
+                        if (detected) {
+                            ctx.beginPath(); ctx.arc(x, y, 16, 0, Math.PI*2)
+                            ctx.strokeStyle = "rgba(255,193,7,0.5)"; ctx.lineWidth = 3; ctx.stroke()
+                        }
                         ctx.save()
                         ctx.translate(x, y); ctx.rotate(Math.PI/4)
-                        ctx.fillStyle = "#FFE082"; ctx.strokeStyle = "#F57F17"; ctx.lineWidth = 2
+                        ctx.fillStyle = detected ? "#FFD740" : "#FFE082"
+                        ctx.strokeStyle = "#F57F17"; ctx.lineWidth = 2
                         ctx.beginPath(); ctx.rect(-r*0.75, -r*0.75, r*1.5, r*1.5)
                         ctx.fill(); ctx.stroke()
                         ctx.restore()
-                        lbl(ctx, label, x+10, y+4, "#FFE082")
+                        lbl(ctx, label, x+10, y+4, detected ? "#FFD740" : "#FFE082")
+                    }
+
+                    function drawFusedTrack(ctx, lat, lon, conf) {
+                        var x = lonToX(lon), y = latToY(lat)
+                        // Orange diamond for fused track estimate
+                        var r = 8
+                        ctx.save(); ctx.translate(x, y); ctx.rotate(Math.PI/4)
+                        ctx.fillStyle   = "rgba(255,152,0,0.7)"
+                        ctx.strokeStyle = "#FF9800"; ctx.lineWidth = 2
+                        ctx.beginPath(); ctx.rect(-r*0.7, -r*0.7, r*1.4, r*1.4)
+                        ctx.fill(); ctx.stroke()
+                        ctx.restore()
+                        // Confidence ring
+                        ctx.beginPath(); ctx.arc(x, y, 10 + conf * 6, 0, Math.PI*2)
+                        ctx.strokeStyle = "rgba(255,152,0,0.4)"; ctx.lineWidth = 1; ctx.stroke()
+                        lbl(ctx, "TRK " + (conf*100).toFixed(0) + "%", x+14, y-6, "#FF9800")
                     }
 
                     function drawPVO(ctx, lat, lon, label, armed) {
@@ -410,9 +485,9 @@ ApplicationWindow {
                     function drawLegend(ctx) {
                         var lx = width - 160, ly = 16, ls = 16, sp = 18
                         ctx.fillStyle = "rgba(13,27,42,0.85)"
-                        ctx.fillRect(lx-8, ly-8, 158, 9*sp+8)
+                        ctx.fillRect(lx-8, ly-8, 158, 10*sp+8)
                         ctx.strokeStyle = "#2471A3"; ctx.lineWidth = 1
-                        ctx.strokeRect(lx-8, ly-8, 158, 9*sp+8)
+                        ctx.strokeRect(lx-8, ly-8, 158, 10*sp+8)
                         ctx.font = "bold 9px sans-serif"
                         ctx.fillStyle = "#7899AA"; ctx.fillText("LEGEND", lx, ly+3)
                         ly += sp
@@ -424,7 +499,8 @@ ApplicationWindow {
                             ["PVO sys (ARMED)",    "#EF9A9A"],
                             ["PVO sys (STANDBY)",  "#546E7A"],
                             ["GG sys (ARMED)",     "#CE93D8"],
-                            ["Target (TGT-001)",   "#F44336"]
+                            ["Target (ground truth)", "#F44336"],
+                            ["Fused track est.",   "#FF9800"]
                         ]
                         for (var i = 0; i < items.length; i++) {
                             ctx.beginPath(); ctx.arc(lx+6, ly, 5, 0, Math.PI*2)
@@ -471,34 +547,52 @@ ApplicationWindow {
                         drawCoordLabels(ctx)
                         drawCorridor(ctx)
 
-                        // Standalone field sensors
-                        drawAcoustic(ctx, 42.824, 20.195, "ACO-W")
-                        drawAcoustic(ctx, 42.833, 20.350, "ACO-C")
-                        drawAcoustic(ctx, 42.821, 20.500, "ACO-E")
+                        // Acoustic — highlight when actively detecting
+                        var aco = root.acousticData
+                        drawAcoustic(ctx, 42.824, 20.195, "ACO-W", aco.length>0 && aco[0].detected)
+                        drawAcoustic(ctx, 42.833, 20.350, "ACO-C", aco.length>1 && aco[1].detected)
+                        drawAcoustic(ctx, 42.821, 20.500, "ACO-E", aco.length>2 && aco[2].detected)
 
-                        drawSeismic(ctx, 42.831, 20.225, "SEI-W")
-                        drawSeismic(ctx, 42.818, 20.370, "SEI-C")
-                        drawSeismic(ctx, 42.829, 20.485, "SEI-E")
+                        // Seismic — highlight when actively detecting
+                        var sei = root.seismicData
+                        drawSeismic(ctx, 42.831, 20.225, "SEI-W", sei.length>0 && sei[0].detected)
+                        drawSeismic(ctx, 42.818, 20.370, "SEI-C", sei.length>1 && sei[1].detected)
+                        drawSeismic(ctx, 42.829, 20.485, "SEI-E", sei.length>2 && sei[2].detected)
 
-                        // PVO systems — corners
+                        // PVO systems — corners (fixed)
                         drawPVO(ctx, 42.840, 20.180, "PVO-01", true)
                         drawPVO(ctx, 42.839, 20.525, "PVO-02", true)
                         drawPVO(ctx, 42.817, 20.185, "PVO-03", false)
                         drawPVO(ctx, 42.816, 20.520, "PVO-04", false)
 
-                        // GG systems — south edge
+                        // GG systems — south edge (fixed)
                         drawGG(ctx, 42.819, 20.225, "GG-01", true)
                         drawGG(ctx, 42.818, 20.352, "GG-02", true)
                         drawGG(ctx, 42.820, 20.478, "GG-03", false)
 
-                        // Vehicles
-                        drawUAV(ctx, 42.832, 20.358, "UAV-ALPHA")
-                        drawUGV(ctx, 42.826, 20.342, "UGV-BRAVO")
+                        // Vehicles — live positions from simBus
+                        var uavLat = root.uavData ? root.uavData.lat : 42.832
+                        var uavLon = root.uavData ? root.uavData.lon : 20.358
+                        var ugvLat = root.ugvData ? root.ugvData.lat : 42.826
+                        var ugvLon = root.ugvData ? root.ugvData.lon : 20.342
+                        drawUAV(ctx, uavLat, uavLon, "UAV-ALPHA")
+                        drawUGV(ctx, ugvLat, ugvLon, "UGV-BRAVO")
 
-                        // Target + intercept + trajectory
-                        drawTrajectory(ctx, 42.829, 20.363, 42.827, 20.355)
-                        drawIntercept(ctx, 42.827, 20.355)
-                        drawTarget(ctx, 42.829, 20.363)
+                        // Target ground truth + trajectory toward UGV
+                        var tgtLat = root.targetData ? root.targetData.lat : 42.829
+                        var tgtLon = root.targetData ? root.targetData.lon : 20.363
+                        var alive  = root.targetData ? root.targetData.alive : true
+                        if (alive) {
+                            drawTrajectory(ctx, tgtLat, tgtLon, ugvLat, ugvLon)
+                            drawIntercept(ctx, 42.827, 20.355)
+                            drawTarget(ctx, tgtLat, tgtLon)
+                        }
+
+                        // Fused track estimate (orange diamond)
+                        if (root.trackData && root.trackData.length > 0) {
+                            var trk = root.trackData[0]
+                            drawFusedTrack(ctx, trk.lat, trk.lon, trk.confidence)
+                        }
 
                         drawLegend(ctx)
                         drawScaleBar(ctx)
@@ -543,11 +637,17 @@ ApplicationWindow {
                                     Text { text: "ALM-20260321-001"; color: root.c_alarm
                                            font { bold: true; pixelSize: 11 } }
                                 }
-                                InfoRow { k: "Level";       v: "HIGH";              vc: root.c_armed }
+                                InfoRow { k: "Level";
+                                           v: root.threatLevel >= 3 ? "HIGH" : root.threatLevel >= 2 ? "MEDIUM" : "LOW"
+                                           vc: root.threatLevel >= 3 ? root.c_armed : root.c_deploy }
                                 InfoRow { k: "Status";      v: "OPERATOR_APPROVED"; vc: "#90CAF9" }
                                 InfoRow { k: "Target";      v: "GROUND_VEHICLE";    vc: root.c_text }
-                                InfoRow { k: "Confidence";  v: "93%";               vc: root.c_active }
-                                InfoRow { k: "Location";    v: "42.829°N  20.363°E"; vc: root.c_text }
+                                InfoRow { k: "Confidence";
+                                           v: root.trackData.length > 0 ? (root.trackData[0].confidence*100).toFixed(0) + "%" : "93%"
+                                           vc: root.c_active }
+                                InfoRow { k: "Location";
+                                           v: root.targetData ? root.targetData.lat.toFixed(4) + "°N  " + root.targetData.lon.toFixed(4) + "°E" : "42.829°N  20.363°E"
+                                           vc: root.c_text }
                                 InfoRow { k: "Time";        v: "14:32:00 UTC";      vc: root.c_dim }
                             }
                         }
@@ -559,16 +659,35 @@ ApplicationWindow {
                         Rectangle {
                             width: 260; height: 90
                             Layout.alignment: Qt.AlignHCenter
-                            color: root.c_card; border.color: "#7B1FA2"; border.width: 1; radius: 4
+                            color: root.c_card
+                            border.color: root.trackData.length > 0 ? "#7B1FA2" : "#37474F"
+                            border.width: 1; radius: 4
                             ColumnLayout {
                                 anchors { fill: parent; margins: 8 }
                                 spacing: 3
-                                Text { text: "TRK-20260321-001"; color: "#CE93D8"
+                                Text { text: root.trackData.length > 0 ? root.trackData[0].trackId : "NO TRACK"
+                                       color: root.trackData.length > 0 ? "#CE93D8" : root.c_dim
                                        font { bold: true; pixelSize: 11 } }
-                                InfoRow { k: "Position";   v: "42.829°N  20.363°E"; vc: root.c_text }
-                                InfoRow { k: "Velocity";   v: "15 km/h";            vc: root.c_text }
-                                InfoRow { k: "Heading";    v: "200°";               vc: root.c_text }
-                                InfoRow { k: "Confidence"; v: "93%";                vc: root.c_active }
+                                InfoRow { k: "Position"
+                                           v: root.trackData.length > 0 ?
+                                               root.trackData[0].lat.toFixed(4) + "°N  " + root.trackData[0].lon.toFixed(4) + "°E"
+                                               : "--"
+                                           vc: root.c_text }
+                                InfoRow { k: "Velocity"
+                                           v: root.trackData.length > 0 ?
+                                               (root.trackData[0].speedMs * 3.6).toFixed(1) + " km/h"
+                                               : "--"
+                                           vc: root.c_text }
+                                InfoRow { k: "Heading"
+                                           v: root.trackData.length > 0 ?
+                                               root.trackData[0].headingDeg.toFixed(0) + "°"
+                                               : "--"
+                                           vc: root.c_text }
+                                InfoRow { k: "Confidence"
+                                           v: root.trackData.length > 0 ?
+                                               (root.trackData[0].confidence * 100).toFixed(0) + "%"
+                                               : "--"
+                                           vc: root.c_active }
                             }
                         }
 
@@ -616,11 +735,29 @@ ApplicationWindow {
 
                         SectionHeader { title: "SENSOR CONFIDENCE" }
 
-                        ConfBar { label: "Acoustic  (x3)"; value: 0.93; barColor: root.c_sensor }
-                        ConfBar { label: "Seismic   (x3)"; value: 0.87; barColor: root.c_warn }
-                        ConfBar { label: "Radar  UAV/UGV"; value: 0.95; barColor: "#80CBC4" }
-                        ConfBar { label: "Camera UAV/UGV"; value: 0.89; barColor: "#80DEEA" }
-                        ConfBar { label: "Fused  output";  value: 0.93; barColor: root.c_uav }
+                        ConfBar { label: "Acoustic  (x3)"
+                                   value: root.acousticData.length > 0 ?
+                                       Math.max(root.acousticData[0].confidence,
+                                                root.acousticData.length>1 ? root.acousticData[1].confidence : 0,
+                                                root.acousticData.length>2 ? root.acousticData[2].confidence : 0) : 0.0
+                                   barColor: root.c_sensor }
+                        ConfBar { label: "Seismic   (x3)"
+                                   value: root.seismicData.length > 0 ?
+                                       Math.max(root.seismicData[0].confidence,
+                                                root.seismicData.length>1 ? root.seismicData[1].confidence : 0,
+                                                root.seismicData.length>2 ? root.seismicData[2].confidence : 0) : 0.0
+                                   barColor: root.c_warn }
+                        ConfBar { label: "Radar  UAV/UGV"
+                                   value: Math.max(
+                                       root.uavData && root.uavData.radar ? root.uavData.radar.confidence : 0,
+                                       root.ugvData && root.ugvData.radar ? root.ugvData.radar.confidence : 0)
+                                   barColor: "#80CBC4" }
+                        ConfBar { label: "Camera UAV"
+                                   value: root.uavData && root.uavData.camera ? root.uavData.camera.confidence : 0.0
+                                   barColor: "#80DEEA" }
+                        ConfBar { label: "Fused  output"
+                                   value: root.trackData.length > 0 ? root.trackData[0].confidence : 0.0
+                                   barColor: root.c_uav }
 
                         Item { height: 10 }
                     }
