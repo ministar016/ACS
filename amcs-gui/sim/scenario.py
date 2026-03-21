@@ -152,14 +152,12 @@ class Scenario:
                 estimates.append((pos, w * 0.6))    # lower weight: bearing-only
                 sources += [r0.sensor_id, r1.sensor_id]
 
-        # Seismic — very short range, high confidence when detected
+        # Seismic — very short range; amplitude-based range is unreliable so
+        # seismic only contributes to the source list (confidence boost), not
+        # to the position estimate.
         sei_detected = [(r, s) for r, s in zip(seismics, self.seismic_sensors)
                         if r.target_detected]
         for r, s in sei_detected:
-            # Use seismic bearing + rough range estimate (amplitude-based)
-            rough_range_m = max(50.0, 500.0 * (1.0 - r.detection_confidence))
-            pos = _polar_to_geo(s._lat, s._lon, r.estimated_bearing, rough_range_m)
-            estimates.append((pos, r.detection_confidence * 0.7))
             sources.append(r.sensor_id)
 
         # UAV radar (most accurate)
