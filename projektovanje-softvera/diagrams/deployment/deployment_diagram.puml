@@ -1,0 +1,99 @@
+@startuml deployment_diagram
+title Deployment Diagram — AMCS Physical Architecture
+
+skinparam node {
+  BackgroundColor LightBlue
+  BorderColor DarkBlue
+}
+skinparam artifact {
+  BackgroundColor LightYellow
+  BorderColor DarkOrange
+}
+skinparam database {
+  BackgroundColor LightGreen
+  BorderColor DarkGreen
+}
+
+' ============================================================
+' COMMAND CENTER HQ
+' ============================================================
+node "Command Center HQ\n<<Secure Facility>>" as HQ {
+
+  node "Operator Workstation\n<<Linux PC>>" as OWS {
+    artifact "Operator Dashboard\n<<React Browser App>>" as DASH
+    artifact "Alarm Console\n<<Browser App>>" as ALARM_UI
+    artifact "Map Viewer\n<<Browser App>>" as MAP_UI
+  }
+
+  node "Application Server\n<<Linux — Docker>>" as APP {
+    artifact "API Gateway\n<<Docker: nginx>>" as GW_ART
+    artifact "Command & Control Service\n<<Docker: Python/FastAPI>>" as CMD_ART
+    artifact "Mission Controller Service\n<<Docker: Python/FastAPI>>" as MISS_ART
+    artifact "Alarm Service\n<<Docker: Python/FastAPI>>" as ALARM_ART
+    artifact "Defence Controller Service\n<<Docker: Python/FastAPI>>" as DEF_ART
+    artifact "Encryption Service\n<<Docker: Python>>" as ENC_ART
+  }
+
+  node "Data Server\n<<Linux>>" as DATA_SRV {
+    database "PostgreSQL\n<<Mission DB>>" as PSQL
+    database "TimescaleDB\n<<Sensor Time-Series>>" as TSDB
+    database "MongoDB\n<<Audit Logs>>" as MONGO
+  }
+
+  node "AI Processing Server\n<<Linux — GPU>>" as AI_SRV {
+    artifact "Sensor Fusion Engine\n<<Python/NumPy>>" as FUSION_ART
+    artifact "Threat Detector\n<<ONNX Runtime>>" as ONNX_ART
+    artifact "Target Tracker\n<<Python/SciPy>>" as TRACK_ART
+    artifact "Trajectory Estimator\n<<Python/SciPy>>" as TRAJ_ART
+  }
+}
+
+' ============================================================
+' FIELD OPERATIONS
+' ============================================================
+node "Field Operations Zone" as FIELD {
+
+  node "UAV Unit\n<<Embedded Linux — ARM>>" as UAV {
+    artifact "UAV Firmware\n<<ROS2 Node>>" as UAV_FW
+    artifact "Camera Driver\n<<OpenCV>>" as CAM_DRV
+    artifact "Radar Driver\n<<Custom C++>>" as RADAR_DRV
+    artifact "LiDAR Driver\n<<ROS2 PointCloud2>>" as LIDAR_DRV
+    artifact "Acoustic Sensor Driver\n<<ROS2>>" as ACOU_DRV
+    artifact "Edge Processor\n<<ONNX Runtime — int8>>" as UAV_EDGE
+    artifact "Comms Module\n<<Encrypted Radio>>" as UAV_RADIO
+  }
+
+  node "UGV Unit\n<<Embedded Linux — x86>>" as UGV {
+    artifact "UGV Firmware\n<<ROS2 Node>>" as UGV_FW
+    artifact "Sensor Array Driver\n<<ROS2>>" as UGV_SENSORS
+    artifact "Seismic Sensor Driver\n<<ROS2>>" as SEIS_DRV
+    artifact "Edge Processor\n<<ONNX Runtime — int8>>" as UGV_EDGE
+    artifact "Comms Module\n<<Encrypted Radio>>" as UGV_RADIO
+  }
+}
+
+' ============================================================
+' COMMUNICATION LINKS
+' ============================================================
+OWS ..> APP : HTTPS / WSS\n<<TLS 1.3 — Port 443>>
+APP ..> DATA_SRV : JDBC / TCP\n<<internal network>>
+APP ..> AI_SRV : gRPC\n<<mTLS>>
+AI_SRV ..> DATA_SRV : JDBC / TCP
+
+UAV_RADIO ..> APP : Encrypted Radio Link\n<<AES-256-GCM>>
+UGV_RADIO ..> APP : Encrypted Radio Link\n<<AES-256-GCM>>
+
+note bottom of UAV
+  Edge pre-processing reduces
+  uplink bandwidth by ~80%.
+  Sensors: Camera, Radar, LiDAR,
+  Acoustic
+end note
+
+note bottom of UGV
+  Sensors: Camera, Radar,
+  Seismic, LiDAR
+  Store-and-forward on signal loss.
+end note
+
+@enduml

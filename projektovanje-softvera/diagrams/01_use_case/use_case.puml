@@ -1,0 +1,82 @@
+@startuml use_case
+title Autonomous Multi-Sensor Command System - Use Case Diagram
+
+left to right direction
+
+skinparam usecase {
+  BackgroundColor LightBlue
+  BorderColor DarkBlue
+  ArrowColor DarkBlue
+}
+
+actor Operator as OP
+
+rectangle "AMCS System" {
+
+  package "Controller 1: Sensor Detection" #E8FFE8 {
+    usecase "UC01 Detect Activity" as UC01
+    usecase "UC02 Pre-Process\nSensor Data" as UC02
+    usecase "UC03 Monitor Zone\n(UGV/UAV Heading)" as UC03
+  }
+
+  package "Controller 2: Sensor Fusion & Alarm" #FFF8E7 {
+    usecase "UC04 Fuse Sensor Data" as UC04
+    usecase "UC05 AI Target\nIdentification" as UC05
+    usecase "UC06 Estimate Target\nTrajectory" as UC06
+    usecase "UC07 Generate Alarm" as UC07
+  }
+
+  package "Controller 3: Operator Decision" #FFE4E4 {
+    usecase "UC08 Review Alarm\n& Target Data" as UC08
+    usecase "UC09 Approve / Deny\nAction" as UC09
+    usecase "UC10 Activate Defence\nSystem (Wakeup)" as UC10
+    usecase "UC11 Deploy UGV/UAV\nto Intercept" as UC11
+    usecase "UC12 Assess Feedback\n(Hit/Miss)" as UC12
+  }
+
+}
+
+OP --> UC03
+OP --> UC08
+OP --> UC09
+OP --> UC12
+
+UC01 ..> UC02 : <<include>>
+UC03 ..> UC01 : <<include>>
+UC02 ..> UC04 : <<include>>
+
+UC04 ..> UC05 : <<include>>
+UC05 ..> UC06 : <<include>>
+UC06 ..> UC07 : <<extend>>
+
+UC07 ..> UC08 : <<include>>
+
+UC09 ..> UC10 : <<extend>>
+UC10 ..> UC11 : <<include>>
+UC11 ..> UC12 : <<include>>
+
+UC12 ..> UC06 : <<extend>>
+
+note bottom of UC01
+  Sensors: Acoustic, Seismic,
+  Radar, LiDAR, Camera
+  Continuous monitoring 24/7
+end note
+
+note right of UC05
+  AI/ML model classifies target
+  Confidence > 0.85 triggers alarm
+end note
+
+note bottom of UC10
+  Defence system wakeup:
+  Get ready mode, drive/fly
+  to intersection position
+end note
+
+note right of UC12
+  Hit = Mission accomplished
+  Miss = Recalculate trajectory
+end note
+
+@enduml

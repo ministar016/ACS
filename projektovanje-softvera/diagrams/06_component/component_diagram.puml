@@ -1,0 +1,135 @@
+@startuml component_diagram
+title Component Diagram — AMCS System Architecture
+
+skinparam component {
+  BackgroundColor LightBlue
+  BorderColor DarkBlue
+}
+skinparam package {
+  BackgroundColor #F5F5F5
+  BorderColor #999999
+}
+skinparam interface {
+  BackgroundColor White
+  BorderColor DarkBlue
+}
+
+' ============================================================
+package "Presentation Layer" {
+  [Operator Dashboard UI] as UI
+  [Real-Time Map Viewer] as MAP
+  [Alarm Console] as CONSOLE
+}
+
+package "Application Layer" {
+  [API Gateway] as GW
+  [Command & Control Service] as CCS
+  [Mission Controller Service] as MCS
+  [Alarm Service] as ALS
+  [Defence Controller Service] as DCS
+}
+
+package "Processing Layer" {
+  [Sensor Fusion Engine] as SFE
+  [Threat Detection Module] as TDM
+  [Target Tracking Service] as TTS
+  [Trajectory Estimator] as TE
+  [AI/ML Inference Engine] as AI
+}
+
+package "Device Layer" {
+  [UAV Communication Adapter] as UAV_A
+  [UGV Communication Adapter] as UGV_A
+  [Device Registry] as DR
+  [Edge Processor] as EP
+}
+
+package "Infrastructure Layer" {
+  [Encryption Service] as ENC
+  [Audit Log Service] as AUDIT
+  database "Mission DB\n<<PostgreSQL>>" as MISSIONDB
+  database "Sensor Data Store\n<<TimescaleDB>>" as SENSORDB
+  database "Audit Database\n<<MongoDB>>" as AUDITDB
+}
+
+' ============================================================
+' Interfaces
+' ============================================================
+interface "REST / WebSocket\n<<HTTPS>>" as HTTP_IF
+interface "gRPC\n<<mTLS>>" as GRPC_IF
+interface "Device Protocol\n<<AES-256 Radio>>" as DEV_IF
+
+' ============================================================
+' Connections — Presentation → Application
+' ============================================================
+UI --> HTTP_IF
+MAP --> HTTP_IF
+CONSOLE --> HTTP_IF
+HTTP_IF --> GW
+
+' ============================================================
+' API Gateway → Services
+' ============================================================
+GW --> CCS
+GW --> ALS
+GW --> DCS
+
+' ============================================================
+' Application Layer internal
+' ============================================================
+CCS --> ENC : encrypt commands
+CCS --> MCS
+CCS --> AUDIT : log events
+ALS --> CONSOLE : <<notify>>
+ALS --> AUDIT : log alarms
+ALS --> DCS : activate defence
+DCS --> UAV_A : deploy device
+DCS --> UGV_A : deploy device
+
+' ============================================================
+' Application → Device Layer
+' ============================================================
+CCS --> UAV_A
+CCS --> UGV_A
+UAV_A --> DEV_IF
+UGV_A --> DEV_IF
+UAV_A --> DR : register device
+UGV_A --> DR : register device
+EP --> SFE : pre-processed data
+
+' ============================================================
+' Processing Layer
+' ============================================================
+SFE --> GRPC_IF
+GRPC_IF --> TDM
+TDM --> AI : run inference
+TDM --> TTS : track target
+TDM --> TE : estimate trajectory
+TDM --> ALS : create alarm
+TE --> DCS : intercept point
+
+' ============================================================
+' Data Layer
+' ============================================================
+MCS --> MISSIONDB
+SFE --> SENSORDB : persist fused data
+AUDIT --> AUDITDB
+
+note bottom of SFE
+  Consumes pre-processed sensor
+  data from edge processors
+  on UAV/UGV devices
+end note
+
+note top of GW
+  Single entry point for
+  operator access.
+end note
+
+note right of DCS
+  Defence Controller manages:
+  Wakeup → Deploy → Engage
+  cycle for UGV/UAV defence
+end note
+
+@enduml

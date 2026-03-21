@@ -1,0 +1,89 @@
+@startuml sm_defence_system
+title State Machine Diagram 1: Defence System States
+
+skinparam state {
+  BackgroundColor LightYellow
+  BorderColor DarkOrange
+  ArrowColor DarkOrange
+}
+
+[*] --> Monitoring : system start
+
+Monitoring --> ActivityDetected : sensor detects activity
+Monitoring --> Monitoring : no activity
+
+state ActivityDetected {
+  [*] --> PreProcessing
+  PreProcessing --> Fusing : edge processor complete
+  Fusing --> Identifying : fusion complete
+  Identifying --> [*]
+}
+
+ActivityDetected --> TargetConfirmed : AI target identified\n(confidence > 0.85)
+ActivityDetected --> Monitoring : no target found
+
+TargetConfirmed --> AlarmGenerated : alarm created\noperator notified
+
+AlarmGenerated --> DefenceReady : operator approves
+AlarmGenerated --> Monitoring : operator denies
+
+state DefenceReady {
+  [*] --> WakeUp
+  WakeUp --> GetReady : select device
+  GetReady --> Deploying : deploy to intercept
+  Deploying --> [*]
+}
+
+DefenceReady --> InRange : device reaches target range
+
+InRange --> Engaged : operator confirms engagement
+InRange --> DefenceReady : target position changed
+InRange --> Monitoring : operator aborts
+
+state Engaged {
+  [*] --> ActionExecuting
+  ActionExecuting --> EvaluatingResult : action complete
+  EvaluatingResult --> [*]
+}
+
+Engaged --> MissionAccomplished : HIT confirmed
+Engaged --> Recalculating : MISS detected
+
+state MissionAccomplished {
+  [*] --> StandingDown
+  StandingDown --> RecallDevice
+  RecallDevice --> ArchiveData
+  ArchiveData --> [*]
+}
+
+MissionAccomplished --> Monitoring : cleanup complete
+
+state Recalculating {
+  [*] --> UpdatingTrack
+  UpdatingTrack --> NewTrajectory : recalculate
+  NewTrajectory --> NewInterceptPoint : predict intercept
+  NewInterceptPoint --> [*]
+}
+
+Recalculating --> AlarmGenerated : new action ready\noperator re-approval needed
+
+note right of DefenceReady
+  Defence system transitions:
+  WAKEUP > GET READY > DEPLOYING
+  Device drives/flies to intercept
+end note
+
+note left of Recalculating
+  On MISS:
+  - Update Kalman parameters
+  - Recalculate trajectory
+  - Propose new intercept point
+  - Request operator re-approval
+end note
+
+note bottom of MissionAccomplished
+  HIT confirmed by sensors.
+  Archive all mission data.
+end note
+
+@enduml

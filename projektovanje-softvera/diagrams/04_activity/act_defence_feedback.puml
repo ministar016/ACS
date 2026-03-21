@@ -1,0 +1,113 @@
+@startuml act_defence_feedback
+title Activity Diagram 2: Defence Action Feedback Loop (Hit / Miss)
+
+skinparam ActivityBackgroundColor LightYellow
+skinparam ActivityBorderColor DarkOrange
+
+|#FFE4E4|Defence Controller|
+|#F0E8FF|Target Tracking|
+|#ADD8E6|Operator|
+|#FFF8E7|Alarm System|
+|#EAEAEA|Audit Log|
+
+|Defence Controller|
+start
+:Receive action result
+from deployed device;
+:Evaluate engagement result;
+
+if (Target neutralized?) then (HIT)
+  :Set action status = SUCCESS;
+
+  |Alarm System|
+  :Resolve alarm
+  status = RESOLVED;
+
+  |Target Tracking|
+  :Close target track;
+  :Archive track data;
+
+  |Defence Controller|
+  :Recall device to base;
+  :Set defence status = STANDBY;
+
+  |Operator|
+  :Display Mission Accomplished;
+
+  |Audit Log|
+  :Record MISSION_ACCOMPLISHED;
+  stop
+
+else (MISS)
+  :Set action status = MISS;
+  :Analyze miss data;
+
+  |Target Tracking|
+  :Update track with new sensor data;
+  :Confirm target still active;
+
+  if (Target still tracked?) then (yes)
+    :Recalculate target position
+    and velocity vector;
+
+    |Defence Controller|
+    :Request trajectory recalculation;
+    :Receive new intercept point;
+    :Prepare new defence action;
+
+    |Alarm System|
+    :Update alarm status = RECALCULATING;
+    :Update alarm with new trajectory;
+
+    |Operator|
+    :Display MISS - New intercept calculated;
+    :Present new defence action
+    for approval;
+
+    if (Operator approves?) then (APPROVE)
+      |Defence Controller|
+      :Redeploy device to
+      new intercept position;
+      :Set defence status = REDEPLOYED;
+
+      |Audit Log|
+      :Record REDEPLOYMENT;
+
+      |Defence Controller|
+      stop
+
+    else (DENY / ABORT)
+      |Defence Controller|
+      :Recall device;
+      :Set defence status = STANDBY;
+
+      |Alarm System|
+      :Set alarm status = OPERATOR_ABORT;
+
+      |Operator|
+      :Display Mission aborted;
+
+      |Audit Log|
+      :Record MISSION_ABORTED;
+      stop
+    endif
+
+  else (no - target lost)
+    |Defence Controller|
+    :Recall device;
+    :Set defence status = STANDBY;
+
+    |Alarm System|
+    :Set alarm status = TARGET_LOST;
+
+    |Operator|
+    :Display Target lost;
+
+    |Audit Log|
+    :Record TARGET_LOST;
+    stop
+  endif
+
+endif
+
+@enduml

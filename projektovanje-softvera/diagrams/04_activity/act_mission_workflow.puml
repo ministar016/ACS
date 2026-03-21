@@ -1,0 +1,135 @@
+@startuml act_mission_workflow
+title Activity Diagram 1: Full Mission Workflow
+
+skinparam ActivityBackgroundColor LightBlue
+skinparam ActivityBorderColor DarkBlue
+
+|#E8FFE8|Controller 1: Sensor Detection|
+|#FFF8E7|Controller 2: Sensor Fusion|
+|#FFE4E4|Controller 3: Operator Decision|
+|#EAEAEA|Audit Log|
+
+|Controller 1: Sensor Detection|
+start
+:Sensors detect activity
+(Acoustic, Seismic, Radar, LiDAR, Camera);
+:Pre-process sensor data
+(edge filtering, noise reduction);
+
+if (Activity signature detected?) then (yes)
+  :Flag activity and package
+  pre-processed data;
+  :Monitor UGV/UAV heading
+  in detection zone;
+
+  |Controller 2: Sensor Fusion|
+  :Receive pre-processed data
+  from Controller 1;
+  :Fuse multi-sensor data
+  (Kalman filter);
+  :Run AI/ML model
+  on fused data;
+
+  if (Target identified?) then (yes)
+    :Classify target type
+    and threat level;
+    :Initialize target tracking;
+    :Estimate target trajectory
+    (Kalman prediction);
+    :Calculate intercept point;
+    :Generate alarm
+    with target data + trajectory;
+
+    |Controller 3: Operator Decision|
+    :Operator receives alarm
+    (target data, trajectory, map);
+    :Review threat information;
+
+    if (Operator approves action?) then (APPROVE)
+      :Defence system WAKEUP;
+      :Select best UGV/UAV
+      for intercept;
+      :Deploy device to
+      intercept position;
+
+      |Audit Log|
+      :Record DEFENCE_DEPLOYED;
+
+      |Controller 3: Operator Decision|
+      :Device approaches target;
+      :Update trajectory in real-time;
+
+      if (Target in range?) then (yes)
+        :Request final operator
+        confirmation;
+
+        if (Operator confirms?) then (yes)
+          :Execute defence action;
+          :Receive action feedback;
+
+          if (Target hit?) then (HIT)
+            :Mission Accomplished;
+
+            |Audit Log|
+            :Record MISSION_ACCOMPLISHED;
+
+            |Controller 3: Operator Decision|
+            :Stand down defence system;
+            :Return to monitoring;
+            stop
+
+          else (MISS)
+            :Recalculate trajectory
+            with updated data;
+            :Calculate new intercept point;
+            :Propose new defence action;
+            :Request operator re-approval;
+
+            |Audit Log|
+            :Record MISS_RECALCULATION;
+
+            |Controller 3: Operator Decision|
+            stop
+          endif
+
+        else (ABORT)
+          :Recall device;
+          :Return to monitoring;
+
+          |Audit Log|
+          :Record ACTION_ABORTED;
+
+          |Controller 3: Operator Decision|
+          stop
+        endif
+
+      else (no - out of range)
+        :Continue tracking and
+        repositioning;
+        stop
+      endif
+
+    else (DENY)
+      :Log operator denial;
+      :Resolve alarm;
+      :Continue monitoring;
+
+      |Audit Log|
+      :Record ACTION_DENIED;
+
+      |Controller 3: Operator Decision|
+      stop
+    endif
+
+  else (no - no target)
+    |Controller 1: Sensor Detection|
+    :Continue monitoring loop;
+    stop
+  endif
+
+else (no - no activity)
+  :Continue monitoring loop;
+  stop
+endif
+
+@enduml

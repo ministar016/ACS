@@ -1,0 +1,87 @@
+@startuml sm_connection_states
+title State Machine Diagram 2 — Device Connection States (UAV/UGV)
+
+skinparam state {
+  BackgroundColor LightBlue
+  BorderColor DarkBlue
+  ArrowColor DarkBlue
+  FontSize 12
+}
+
+[*] --> Offline : device.powerOn()
+
+Offline --> Connecting : device.connect(serverEndpoint)\n/ initHandshake()
+
+Connecting --> Online : connection.established AND auth.success\n/ startHeartbeat()
+
+Connecting --> Offline : connection.timeout(15s)\n/ logConnectionFailure()
+
+Connecting --> Error : auth.failed OR cert.invalid\n/ logAuthError()
+
+state Online {
+  [*] --> Authenticated
+  Authenticated --> Encrypted : tls.handshakeComplete()\n/ startEncryptedChannel()
+  Encrypted --> Ready
+  Ready --> [*]
+}
+
+Online --> Transmitting : dataStream.start()\n/ startSensorCapture()
+
+Online --> Idle : noActivity(60s)\n/ enterPowerSaveMode()
+
+Online --> Disconnecting : device.disconnect()\n/ sendDisconnectPacket()
+
+Online --> LostSignal : heartbeat.missed(3)\n/ logSignalLoss()
+
+Transmitting --> Online : dataStream.stop()\n/ stopSensorCapture()
+
+Transmitting --> LostSignal : signal.lost()\n/ saveBufferedData()
+
+Transmitting --> Error : transmission.corruptionDetected()\n/ triggerChecksumAlert()
+
+state Transmitting {
+  [*] --> Streaming
+  Streaming --> Buffering : bandwidth.low()
+  Buffering --> Streaming : bandwidth.restored()
+  Streaming --> [*]
+}
+
+Idle --> Online : activity.detected()\n/ exitPowerSaveMode()
+
+Idle --> LostSignal : heartbeat.missed(3)
+
+Idle --> Disconnecting : idleTimeout(300s)\n/ initiateGracefulShutdown()
+
+LostSignal --> Connecting : reconnect.attempt()\n[reconnectCount < maxRetries]\n/ incrementRetryCounter()
+
+LostSignal --> Offline : reconnect.maxRetriesExceeded()\n/ notifyCommandCenter()
+
+state LostSignal {
+  [*] --> WaitingRetry
+  WaitingRetry --> Retrying : backoffTimer.elapsed()
+  Retrying --> WaitingRetry : reconnect.failed()
+  Retrying --> [*] : reconnect.success()
+}
+
+Disconnecting --> Offline : disconnect.complete()\n/ saveDeviceState()
+
+Error --> Connecting : error.retry()\n[error.isRecoverable]\n/ clearErrorState()
+
+Error --> Offline : error.fatal()\n/ logFatalError()
+
+Error --> [*] : device.decommission()\n/ removeFromRegistry()
+
+note right of Transmitting
+  Streaming rate: 10 Hz (100ms)
+  Payload: FusedSensorData + telemetry
+  Protocol: gRPC streams over TLS 1.3
+end note
+
+note left of LostSignal
+  Retry strategy:
+  Exponential backoff
+  Max retries: 5
+  Max wait: 32s
+end note
+
+@enduml

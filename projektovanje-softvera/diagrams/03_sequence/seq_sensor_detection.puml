@@ -1,0 +1,56 @@
+@startuml seq_sensor_detection
+title Sequence Diagram 1: Sensor Detection & Pre-Processing (Controller 1)
+
+participant "AcousticSensor" as ACOU
+participant "SeismicSensor" as SEIS
+participant "RadarSensor" as RAD
+participant "LiDARSensor" as LID
+participant "CameraSensor" as CAM
+participant "EdgeProcessor" as EDGE
+participant "SensorFusionEngine" as SFE
+
+note over ACOU, SFE
+  Controller 1: Continuous zone monitoring.
+  Sensors detect activity, edge processor
+  pre-processes and forwards to Controller 2.
+end note
+
+loop every 100ms
+
+  ACOU -> EDGE : detectSound()
+  SEIS -> EDGE : detectVibration()
+  RAD -> EDGE : detectTargets()
+  LID -> EDGE : generatePointCloud()
+  CAM -> EDGE : captureFrame()
+
+  activate EDGE
+  EDGE -> EDGE : filterNoise(allSensorData)
+  EDGE -> EDGE : detectActivitySignature()
+  EDGE -> EDGE : runObjectDetection(frame)
+  EDGE -> EDGE : extractRadarFeatures()
+  EDGE -> EDGE : compressResults()
+
+  alt Activity Detected
+    EDGE -> SFE : transmitPreProcessedData(edgeResult)
+  else No significant activity
+    EDGE -> EDGE : continue monitoring
+  end
+
+  deactivate EDGE
+
+end
+
+note over EDGE
+  Edge pre-processing reduces
+  bandwidth by ~80%.
+  Only significant activity data
+  is forwarded to Controller 2.
+end note
+
+note over ACOU
+  Acoustic + Seismic sensors
+  provide early detection
+  before visual confirmation.
+end note
+
+@enduml

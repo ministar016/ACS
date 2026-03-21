@@ -1,0 +1,123 @@
+@startuml seq_feedback_loop
+title Sequence Diagram 4: Action Feedback Loop (Hit / Miss)
+
+actor "Operator" as OP
+participant "CommandCenter" as CC
+participant "DefenceController" as DC
+participant "ActionFeedback" as AF
+participant "TrajectoryEstimator" as TE
+participant "TargetTracker" as TT
+participant "AlarmSystem" as AS
+participant "AuditLog" as AUDIT
+
+note over OP, AUDIT
+  After defence action execution,
+  system evaluates result (hit/miss)
+  and takes appropriate next steps.
+end note
+
+== Receive Action Result ==
+DC -> AF : submitResult(actionId, result)
+activate AF
+AF -> AF : evaluate(result)
+AF -> AF : determineHitOrMiss()
+
+alt HIT - Mission Accomplished
+
+  AF -> CC : reportSuccess(actionId, targetId)
+  activate CC
+
+  CC -> AS : resolveAlarm(alarmId)
+  activate AS
+  AS -> AS : setStatus(RESOLVED)
+  AS --> CC : alarmResolved
+  deactivate AS
+
+  CC -> DC : standDown(actionId)
+  DC -> DC : setStatus(STANDBY)
+  DC -> DC : recallDevice()
+
+  CC -> TT : closeTrack(trackId)
+  activate TT
+  TT -> TT : archiveTrackData()
+  TT --> CC : trackClosed
+  deactivate TT
+
+  CC -> AUDIT : logEvent(MISSION_ACCOMPLISHED)
+  CC -> OP : Mission Accomplished
+
+  deactivate CC
+
+else MISS - Recalculate Defence
+
+  AF -> CC : reportMiss(actionId, missData)
+  activate CC
+
+  CC -> OP : MISS - Recalculating
+
+  == Recalculate Trajectory ==
+  CC -> TT : getLatestTrackData(trackId)
+  activate TT
+  TT -> TT : updateWithLatestSensorData()
+  TT --> CC : updatedTrack
+  deactivate TT
+
+  CC -> TE : recalculateTrajectory(updatedTrack)
+  activate TE
+  TE -> TE : adjustKalmanParameters()
+  TE -> TE : recalculateInterceptPoint()
+  TE --> CC : newTrajectory
+  deactivate TE
+
+  == New Defence Action ==
+  CC -> AS : updateAlarm(alarmId, newTrajectory)
+  activate AS
+  AS -> AS : setStatus(RECALCULATING)
+  AS -> OP : New intercept calculated
+  deactivate AS
+
+  CC -> DC : prepareNewAction(targetId)
+  activate DC
+  DC -> DC : setStatus(GET_READY)
+  DC -> DC : selectDevice(newInterceptPoint)
+  DC --> CC : newDefenceAction
+  deactivate DC
+
+  CC -> OP : requestApproval(newDefenceAction)
+
+  == Operator Re-approval ==
+  OP -> CC : decision(newActionId)
+
+  alt Re-APPROVED
+    CC -> DC : deployToIntercept(newPosition)
+    CC -> AUDIT : logEvent(REDEPLOYMENT)
+    note right
+      Loop continues until
+      hit or operator denies
+    end note
+  else DENIED
+    CC -> AS : resolveAlarm(alarmId, ABORT)
+    CC -> DC : standDown(newActionId)
+    CC -> AUDIT : logEvent(MISSION_ABORTED)
+    CC -> OP : Mission aborted
+  end
+
+  deactivate CC
+
+end
+
+deactivate AF
+
+note over AF
+  ActionFeedback evaluates:
+  - Sensor confirmation of hit
+  - Target status after engagement
+end note
+
+note over TE
+  On miss, Kalman filter parameters
+  are adjusted to improve
+  next prediction accuracy.
+end note
+
+@enduml

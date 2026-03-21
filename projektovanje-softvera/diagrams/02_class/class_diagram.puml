@@ -1,0 +1,313 @@
+@startuml class_diagram
+title Autonomous Multi-Sensor Command System\nClass Diagram
+
+skinparam classAttributeIconSize 0
+skinparam class {
+  BackgroundColor LightYellow
+  BorderColor DarkOrange
+  ArrowColor DarkOrange
+}
+
+' ============================================================
+' PACKAGE: User Management
+' ============================================================
+package "User Management" #EEEEEE {
+
+  class Operator {
+    - operatorId : String
+    - username : String
+    - assignedZone : String
+    - clearanceLevel : Integer
+    - lastLogin : DateTime
+    + login(credentials : Credentials) : AuthToken
+    + logout() : void
+    + monitorZone() : ZoneStatus
+    + reviewAlarm(alarm : Alarm) : AlarmDetails
+    + approveAction(action : DefenceAction) : Boolean
+    + denyAction(action : DefenceAction) : Boolean
+    + assessFeedback(feedback : ActionFeedback) : Decision
+  }
+}
+
+' ============================================================
+' PACKAGE: Command & Control
+' ============================================================
+package "Command & Control" #E8F4FD {
+
+  class CommandCenter {
+    - centerId : String
+    - location : GeoCoordinate
+    - activeOperators : List<Operator>
+    - connectedDevices : List<Device>
+    + issueCommand(cmd : Command) : CommandStatus
+    + receiveData(data : SensorData) : void
+    + broadcastAlarm(alarm : Alarm) : void
+    + getSystemStatus() : SystemStatus
+  }
+
+  class Command {
+    - commandId : String
+    - type : CommandType
+    - payload : byte[]
+    - timestamp : DateTime
+    - isEncrypted : Boolean
+    - targetDeviceId : String
+    + encrypt() : EncryptedCommand
+    + validate() : Boolean
+    + serialize() : byte[]
+  }
+
+  class MissionController {
+    - missionId : String
+    - status : MissionStatus
+    - assignedDevices : List<Device>
+    - objectives : List<Objective>
+    + startMission() : void
+    + pauseMission() : void
+    + abortMission() : void
+    + updateObjective(obj : Objective) : void
+  }
+}
+
+' ============================================================
+' PACKAGE: Autonomous Vehicles
+' ============================================================
+package "Autonomous Vehicles" #F0FFF0 {
+
+  abstract class Device {
+    - deviceId : String
+    - type : DeviceType
+    - status : DeviceStatus
+    - location : GeoCoordinate
+    - batteryLevel : Float
+    + connect() : Boolean
+    + disconnect() : void
+    + sendTelemetry() : TelemetryData
+    + receiveCommand(cmd : EncryptedCommand) : void
+  }
+
+  class UAV {
+    - altitude : Float
+    - speed : Float
+    - heading : Float
+    + takeOff(altitude : Float) : void
+    + land() : void
+    + setWaypoints(waypoints : List<GeoCoordinate>) : void
+    + flyToInterceptPosition(position : GeoCoordinate) : void
+  }
+
+  class UGV {
+    - terrainMode : TerrainMode
+    - speed : Float
+    - obstacleDetected : Boolean
+    + navigate(destination : GeoCoordinate) : void
+    + stop() : void
+    + driveToInterceptPosition(position : GeoCoordinate) : void
+  }
+}
+
+' ============================================================
+' PACKAGE: Sensor Layer
+' ============================================================
+package "Sensor Layer" #FFF8E7 {
+
+  abstract class Sensor {
+    - sensorId : String
+    - type : SensorType
+    - samplingRate : Float
+    + startCapture() : void
+    + stopCapture() : void
+    + getData() : SensorData
+    + calibrate() : void
+  }
+
+  class AcousticSensor {
+    - frequencyRange : FrequencyRange
+    - sensitivity : Float
+    + detectSound() : AcousticSignature
+    + classifySource(sig : AcousticSignature) : SourceType
+  }
+
+  class SeismicSensor {
+    - sensitivity : Float
+    - depthRange : Float
+    + detectVibration() : SeismicData
+    + classifyMovement(data : SeismicData) : MovementType
+  }
+
+  class RadarSensor {
+    - range : Float
+    - frequency : Float
+    + detectTargets() : List<RadarTarget>
+    + measureDistance(target : RadarTarget) : Float
+    + trackVelocity(target : RadarTarget) : Float
+  }
+
+  class LiDARSensor {
+    - pointsPerSecond : Integer
+    - range : Float
+    + generatePointCloud() : PointCloud
+    + map3DEnvironment() : Map3D
+  }
+
+  class CameraSensor {
+    - resolution : Resolution
+    - fps : Integer
+    - nightVision : Boolean
+    + captureFrame() : Frame
+    + startVideoStream() : Stream
+    + detectObjects() : List<DetectedObject>
+  }
+
+  class SensorFusionEngine {
+    - sensors : List<Sensor>
+    - fusionAlgorithm : FusionAlgorithm
+    + fuseData(dataSet : List<SensorData>) : FusedData
+    + detectAnomalies(data : FusedData) : List<Anomaly>
+    + applyKalmanFilter(data : SensorData) : SensorData
+  }
+}
+
+' ============================================================
+' PACKAGE: Threat Detection & Tracking
+' ============================================================
+package "Threat Detection & Tracking" #F0E8FF {
+
+  class ThreatDetectionModule {
+    - rules : List<DetectionRule>
+    - mlModel : ThreatModel
+    + analyzeData(data : FusedData) : List<Threat>
+    + classifyThreat(threat : Threat) : ThreatLevel
+    + identifyTarget(data : FusedData) : TargetIdentification
+  }
+
+  class TargetTracker {
+    - trackedTargets : Map<String, Target>
+    - trackingAlgorithm : TrackingAlgorithm
+    + initTrack(target : DetectedObject) : Track
+    + updateTrack(trackId : String, data : SensorData) : void
+    + lostTrack(trackId : String) : void
+    + getPredictedPosition(trackId : String) : GeoCoordinate
+  }
+
+  class TrajectoryEstimator {
+    - kalmanFilter : KalmanFilter
+    + estimateTrajectory(track : Track) : Trajectory
+    + predictInterceptPoint(traj : Trajectory) : GeoCoordinate
+    + recalculateTrajectory(track : Track, feedback : ActionFeedback) : Trajectory
+  }
+}
+
+' ============================================================
+' PACKAGE: Defence System
+' ============================================================
+package "Defence System" #FFE4E4 {
+
+  class DefenceController {
+    - status : DefenceStatus
+    - assignedDevices : List<Device>
+    + wakeup() : void
+    + getReady(target : Target) : void
+    + deployToIntercept(device : Device, position : GeoCoordinate) : void
+    + executeAction(action : DefenceAction) : ActionResult
+    + standDown() : void
+  }
+
+  class AlarmSystem {
+    - activeAlarms : List<Alarm>
+    + createAlarm(threat : Threat, trajectory : Trajectory) : Alarm
+    + escalateAlarm(alarm : Alarm) : void
+    + resolveAlarm(alarmId : String) : void
+    + notifyOperator(alarm : Alarm) : void
+  }
+
+  class DefenceAction {
+    - actionId : String
+    - type : ActionType
+    - targetId : String
+    - interceptPosition : GeoCoordinate
+    - status : ActionStatus
+    + approve(operatorId : String) : void
+    + deny(operatorId : String, reason : String) : void
+    + execute() : ActionResult
+  }
+
+  class ActionFeedback {
+    - feedbackId : String
+    - actionId : String
+    - result : ActionResult
+    - hitOrMiss : Boolean
+    - timestamp : DateTime
+    + evaluate() : FeedbackAssessment
+    + triggerRecalculation() : void
+  }
+}
+
+' ============================================================
+' PACKAGE: Infrastructure
+' ============================================================
+package "Infrastructure" #EAEAEA {
+
+  class EncryptionService {
+    - algorithm : EncryptionAlgorithm
+    - keySize : Integer
+    + encrypt(data : byte[]) : byte[]
+    + decrypt(data : byte[]) : byte[]
+    + generateKey() : EncryptionKey
+  }
+
+  class AuditLog {
+    - logId : String
+    - entries : List<LogEntry>
+    + logEvent(event : SystemEvent) : void
+    + query(filter : LogFilter) : List<LogEntry>
+  }
+}
+
+' ============================================================
+' RELATIONSHIPS
+' ============================================================
+
+' Inheritance
+Device <|-- UAV
+Device <|-- UGV
+
+Sensor <|-- AcousticSensor
+Sensor <|-- SeismicSensor
+Sensor <|-- RadarSensor
+Sensor <|-- LiDARSensor
+Sensor <|-- CameraSensor
+
+' Aggregations
+Device "1..*" o-- "1..*" Sensor : contains >
+
+' Associations — Command & Control
+CommandCenter "1" --> "1..*" Operator : managed by >
+CommandCenter "1" --> "1..*" Device : monitors >
+CommandCenter --> MissionController : delegates to >
+CommandCenter --> AlarmSystem : uses >
+CommandCenter --> AuditLog : logs via >
+MissionController "1" --> "1..*" Command : issues >
+
+' Associations — Sensor Processing Chain
+SensorFusionEngine "1" --> "1..*" Sensor : aggregates >
+SensorFusionEngine --> ThreatDetectionModule : feeds >
+
+' Associations — Threat & Tracking
+ThreatDetectionModule --> TargetTracker : delegates tracking >
+ThreatDetectionModule --> AlarmSystem : triggers >
+TargetTracker --> TrajectoryEstimator : estimates trajectory >
+
+' Associations — Defence
+AlarmSystem --> DefenceController : activates >
+AlarmSystem --> Operator : notifies >
+DefenceController --> DefenceAction : creates >
+DefenceController "1" --> "1..*" Device : deploys >
+Operator --> DefenceAction : approves/denies >
+DefenceAction --> ActionFeedback : produces >
+ActionFeedback --> TrajectoryEstimator : triggers recalculation >
+
+' Infrastructure
+EncryptionService ..> Command : <<encrypts>>
+
+@enduml

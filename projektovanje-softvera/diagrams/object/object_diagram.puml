@@ -1,0 +1,157 @@
+@startuml object_diagram
+title Object Diagram — AMCS Runtime Instances\n(Active Mission MSN-2026-003, 2026-03-21 14:32 UTC)
+
+skinparam object {
+  BackgroundColor LightYellow
+  BorderColor DarkOrange
+}
+
+' ============================================================
+' MISSION
+' ============================================================
+object "mission_03 : MissionController" as MISS {
+  missionId = "MSN-2026-003"
+  status = MissionStatus.ACTIVE
+  startTime = "2026-03-21T14:00:00Z"
+  assignedZone = "ZONE-BRAVO"
+}
+
+' ============================================================
+' OPERATOR
+' ============================================================
+object "op_jovic : Operator" as OP {
+  operatorId = "OP-0042"
+  username = "jovic.m"
+  clearanceLevel = 3
+  assignedZone = "ZONE-BRAVO"
+  lastLogin = "2026-03-21T08:00:00Z"
+}
+
+' ============================================================
+' DEVICES
+' ============================================================
+object "uav_alpha : UAV" as UAV {
+  deviceId = "UAV-ALPHA-001"
+  type = DeviceType.UAV
+  status = DeviceStatus.TRANSMITTING
+  location = GeoCoordinate(44.8125, 20.4612, 120.0)
+  batteryLevel = 78.5
+  altitude = 120.0
+  speed = 45.0
+  heading = 270.0
+}
+
+object "ugv_bravo : UGV" as UGV {
+  deviceId = "UGV-BRAVO-002"
+  type = DeviceType.UGV
+  status = DeviceStatus.DEPLOYING
+  location = GeoCoordinate(44.8100, 20.4590, 0.0)
+  batteryLevel = 92.3
+  terrainMode = TerrainMode.RUGGED
+  speed = 25.0
+}
+
+' ============================================================
+' SENSORS (on uav_alpha)
+' ============================================================
+object "cam_01 : CameraSensor" as CAM {
+  sensorId = "CAM-UAV-ALPHA-01"
+  resolution = Resolution.HD_1080P
+  fps = 30
+  nightVision = true
+  status = SensorStatus.ACTIVE
+}
+
+object "radar_01 : RadarSensor" as RAD {
+  sensorId = "RAD-UAV-ALPHA-01"
+  range = 5000.0
+  frequency = 77.0
+  status = SensorStatus.ACTIVE
+}
+
+object "lidar_01 : LiDARSensor" as LID {
+  sensorId = "LID-UAV-ALPHA-01"
+  pointsPerSecond = 100000
+  range = 200.0
+  status = SensorStatus.ACTIVE
+}
+
+object "acoustic_01 : AcousticSensor" as ACOU {
+  sensorId = "ACO-UAV-ALPHA-01"
+  frequencyRange = "20Hz-20kHz"
+  sensitivity = -42.0
+  status = SensorStatus.ACTIVE
+}
+
+' ============================================================
+' ALARM & DEFENCE
+' ============================================================
+object "alarm_001 : Alarm" as ALARM {
+  alarmId = "ALM-20260321-001"
+  level = ThreatLevel.HIGH
+  status = AlarmStatus.OPERATOR_APPROVED
+  confidence = 0.93
+  timestamp = "2026-03-21T14:32:00Z"
+  targetLocation = GeoCoordinate(44.8115, 20.4605)
+}
+
+object "action_001 : DefenceAction" as ACTION {
+  actionId = "ACT-20260321-001"
+  type = ActionType.INTERCEPT
+  targetId = "TGT-001"
+  interceptPosition = GeoCoordinate(44.8110, 20.4600)
+  status = ActionStatus.DEPLOYING
+  approvedBy = "OP-0042"
+}
+
+object "track_001 : Track" as TRACK {
+  trackId = "TRK-20260321-001"
+  targetPosition = GeoCoordinate(44.8115, 20.4605)
+  velocity = 15.0
+  heading = 180.0
+  confidence = 0.93
+}
+
+object "trajectory_001 : Trajectory" as TRAJ {
+  estimatedPath = "[44.8115→44.8100, 20.4605→20.4590]"
+  interceptPoint = GeoCoordinate(44.8110, 20.4600)
+  estimatedETA = "2026-03-21T14:35:00Z"
+}
+
+' ============================================================
+' LINKS
+' ============================================================
+MISS "controls 1..*" -- UAV
+MISS "controls 1..*" -- UGV
+OP "monitors 1" -- MISS
+OP "approved" ..> ACTION
+
+UAV "has sensor" -- CAM
+UAV "has sensor" -- RAD
+UAV "has sensor" -- LID
+UAV "has sensor" -- ACOU
+
+ALARM "triggered defence" ..> ACTION
+ACTION "targets" ..> TRACK
+TRACK "estimated by" ..> TRAJ
+UGV "deployed for" ..> ACTION
+
+note bottom of ALARM
+  HIGH alarm at 14:32:00.
+  Detected by acoustic + radar
+  + camera fusion. Confidence: 93%.
+  Operator approved defence action.
+end note
+
+note right of UGV
+  UGV deploying to intercept
+  position at 25 km/h.
+  Battery: 92.3%.
+end note
+
+note left of TRAJ
+  Kalman-predicted trajectory.
+  ETA to intercept: ~3 min.
+end note
+
+@enduml

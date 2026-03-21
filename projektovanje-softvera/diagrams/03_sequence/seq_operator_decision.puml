@@ -1,0 +1,96 @@
+@startuml seq_operator_decision
+title Sequence Diagram 3: Operator Decision & Defence Action (Controller 3)
+
+actor "Operator" as OP
+participant "CommandCenter" as CC
+participant "AlarmSystem" as AS
+participant "DefenceController" as DC
+participant "UAV_UGV" as DEV
+participant "TrajectoryEstimator" as TE
+participant "AuditLog" as AUDIT
+
+note over OP, AUDIT
+  Controller 3: Operator reviews alarm,
+  approves or denies defence action.
+  Defence system wakes up and deploys.
+end note
+
+== Operator Review ==
+OP -> CC : reviewAlarm(alarmId)
+activate CC
+CC -> AS : getAlarmDetails(alarmId)
+activate AS
+AS --> CC : AlarmDetails
+deactivate AS
+CC --> OP : display alarm data on map
+deactivate CC
+
+== Operator Decision ==
+OP -> CC : decision(alarmId, APPROVE or DENY)
+activate CC
+
+alt Action APPROVED
+
+  == Defence System Wakeup ==
+  CC -> DC : wakeup(alarmId, targetData)
+  activate DC
+  DC -> DC : setStatus(GET_READY)
+  DC -> DC : selectBestDevice(interceptPoint)
+  DC --> CC : DefenceAction
+
+  == Deploy to Intercept Position ==
+  DC -> DEV : deployToIntercept(interceptPosition)
+  activate DEV
+  DEV -> DEV : calculateRoute()
+  DEV -> DEV : startMovement()
+
+  CC -> AUDIT : logEvent(DEFENCE_DEPLOYED)
+
+  == Approach ==
+  loop Target tracking update
+    DEV -> TE : requestUpdatedTrajectory()
+    activate TE
+    TE --> DEV : updatedInterceptPoint
+    deactivate TE
+    DEV -> DEV : adjustCourse()
+  end
+
+  DEV -> CC : targetInRange(actionId)
+  CC -> OP : requestFinalConfirmation()
+
+  == Final Operator Confirmation ==
+  OP -> CC : confirmEngagement(actionId)
+  CC -> DC : executeAction(actionId)
+  DC -> DEV : executeDefenceAction()
+  DEV -> DEV : engageTarget()
+  DEV --> DC : ActionResult
+  deactivate DEV
+
+  DC --> CC : ActionFeedback
+  deactivate DC
+
+  CC -> AUDIT : logEvent(ACTION_EXECUTED)
+  CC -> OP : displayResult(feedback)
+
+else Action DENIED
+
+  CC -> AS : resolveAlarm(alarmId, DENIED)
+  CC -> AUDIT : logEvent(ACTION_DENIED)
+  CC --> OP : alarm resolved
+
+end
+
+deactivate CC
+
+note over DC
+  Defence system transitions:
+  STANDBY > GET_READY > DEPLOYED > ENGAGED
+end note
+
+note over OP
+  Two-step confirmation:
+  1. Approve defence action
+  2. Confirm engagement when in range
+end note
+
+@enduml

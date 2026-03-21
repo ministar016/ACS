@@ -1,0 +1,85 @@
+@startuml seq_sensor_fusion
+title Sequence Diagram 2: Sensor Fusion & Target Identification (Controller 2)
+
+participant "SensorFusionEngine" as SFE
+participant "ThreatDetectionModule" as TDM
+participant "TargetTracker" as TT
+participant "TrajectoryEstimator" as TE
+participant "AlarmSystem" as AS
+participant "CommandCenter" as CC
+actor "Operator" as OP
+
+note over SFE, OP
+  Controller 2: Receives pre-processed data
+  from Controller 1. Fuses data, identifies
+  targets with AI, estimates trajectory,
+  and generates alarm for Operator.
+end note
+
+== Sensor Fusion ==
+activate SFE
+SFE -> SFE : synchronizeTimestamps()
+SFE -> SFE : applyKalmanFilter()
+SFE -> SFE : mergeDetections()
+SFE -> SFE : resolveConflicts()
+SFE -> SFE : computeConfidenceScore()
+
+SFE -> TDM : analyzeData(fusedData)
+deactivate SFE
+activate TDM
+
+== AI Target Identification ==
+TDM -> TDM : runMLInference(fusedData)
+TDM -> TDM : classifyTarget(result)
+TDM -> TDM : computeConfidence()
+
+alt Target Identified (confidence > 0.85)
+
+  TDM -> TDM : identifyTarget()
+  TDM -> TDM : classifyThreatLevel()
+
+  == Target Tracking ==
+  TDM -> TT : initTrack(detectedTarget)
+  activate TT
+  TT -> TT : assignTrackId()
+  TT -> TT : setInitialState(position, velocity)
+  TT --> TDM : Track
+  deactivate TT
+
+  == Trajectory Estimation ==
+  TDM -> TE : estimateTrajectory(track)
+  activate TE
+  TE -> TE : applyKalmanPrediction()
+  TE -> TE : predictInterceptPoint()
+  TE --> TDM : Trajectory
+  deactivate TE
+
+  == Generate Alarm ==
+  TDM -> AS : createAlarm(threat, trajectory)
+  activate AS
+  AS -> AS : assignAlarmId()
+  AS -> AS : setPriority(threatLevel)
+  AS -> CC : broadcastAlarm(alarm)
+  AS -> OP : notifyOperator(alarm, targetData)
+  deactivate AS
+
+else No Target (confidence <= 0.85)
+
+  TDM --> SFE : continue monitoring
+
+end
+
+deactivate TDM
+
+note over TDM
+  AI model: ONNX classifier
+  Confidence threshold: 0.85
+end note
+
+note over TE
+  Kalman-based trajectory prediction.
+  Intercept point calculated for
+  defence system positioning.
+end note
+
+@enduml

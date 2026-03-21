@@ -1,0 +1,158 @@
+@startuml package_diagram
+title Package Diagram — AMCS Module Organization
+
+skinparam package {
+  BackgroundColor LightYellow
+  BorderColor DarkOrange
+  FontSize 13
+}
+skinparam class {
+  BackgroundColor White
+  BorderColor Gray
+  FontSize 11
+}
+
+package "amcs" {
+
+  package "amcs.presentation" #DDEEFF {
+    package "amcs.presentation.dashboard" {
+      class DashboardController
+      class MapViewComponent
+      class TelemetryWidget
+    }
+    package "amcs.presentation.alarms" {
+      class AlarmConsoleController
+      class AlarmListView
+      class AlarmDetailView
+    }
+    package "amcs.presentation.map" {
+      class BattlefieldMapView
+      class DeviceMarker
+      class ThreatOverlay
+      class TrajectoryOverlay
+    }
+  }
+
+  package "amcs.api" #E8FFE8 {
+    package "amcs.api.gateway" {
+      class GatewayRouter
+      class RequestLogger
+    }
+    package "amcs.api.controllers" {
+      class CommandController
+      class MissionController
+      class AlarmController
+      class DefenceController
+    }
+    package "amcs.api.dto" {
+      class CommandRequest
+      class CommandResponse
+      class AlarmDTO
+      class DefenceActionDTO
+    }
+  }
+
+  package "amcs.domain" #FFF8E1 {
+    package "amcs.domain.command" {
+      class CommandCenter
+      class Command
+      class MissionControllerService
+    }
+    package "amcs.domain.devices" {
+      abstract class Device
+      class UAV
+      class UGV
+      class DeviceRegistry
+    }
+    package "amcs.domain.sensors" {
+      abstract class Sensor
+      class AcousticSensor
+      class SeismicSensor
+      class RadarSensor
+      class LiDARSensor
+      class CameraSensor
+      class SensorFusionEngine
+    }
+    package "amcs.domain.users" {
+      class Operator
+    }
+  }
+
+  package "amcs.processing" #F0E8FF {
+    package "amcs.processing.fusion" {
+      class SensorFusionPipeline
+      class KalmanFilter
+      class DataSynchronizer
+      class ConflictResolver
+    }
+    package "amcs.processing.detection" {
+      class ThreatDetectionModule
+      class DetectionRule
+      class MLInferenceEngine
+      class ThreatClassifier
+    }
+    package "amcs.processing.tracking" {
+      class TargetTracker
+      class Track
+      class TrajectoryEstimator
+    }
+  }
+
+  package "amcs.defence" #FFE4E4 {
+    package "amcs.defence.controller" {
+      class DefenceControllerService
+      class DefenceAction
+      class ActionFeedback
+    }
+    package "amcs.defence.alarm" {
+      class AlarmSystem
+      class Alarm
+      class AlarmPriority
+    }
+  }
+
+  package "amcs.infrastructure" #EAEAEA {
+    package "amcs.infrastructure.persistence" {
+      class MissionRepository
+      class SensorDataRepository
+    }
+    package "amcs.infrastructure.crypto" {
+      class EncryptionService
+      class KeyManager
+    }
+    package "amcs.infrastructure.logging" {
+      class AuditLog
+      class LogEntry
+      class AuditLogRepository
+    }
+  }
+
+}
+
+' ============================================================
+' DEPENDENCY RULES
+' ============================================================
+"amcs.presentation" ..> "amcs.api" : <<uses>>
+"amcs.api" ..> "amcs.domain" : <<uses>>
+"amcs.api" ..> "amcs.defence" : <<uses>>
+"amcs.domain" ..> "amcs.processing" : <<uses>>
+"amcs.domain" ..> "amcs.infrastructure" : <<uses>>
+"amcs.processing" ..> "amcs.infrastructure" : <<uses>>
+"amcs.defence" ..> "amcs.processing" : <<uses>>
+"amcs.defence" ..> "amcs.domain" : <<uses>>
+"amcs.defence" ..> "amcs.infrastructure" : <<uses>>
+
+note bottom of "amcs.infrastructure"
+  Infrastructure provides:
+  persistence, encryption,
+  and audit logging for
+  all other layers.
+end note
+
+note top of "amcs.defence"
+  Defence package orchestrates:
+  alarm generation, defence
+  actions, and feedback loops.
+end note
+
+@enduml
