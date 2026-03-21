@@ -65,10 +65,11 @@ ApplicationWindow {
     property var  acousticData: []
     property var  seismicData:  []
     property var  trackData:    []
-    property var  targetData:   ({lat: 42.829, lon: 20.363, alive: true})
+    property var  targetData:   ({lat: 42.848, lon: 20.170, alive: true})
     property int  threatLevel:  0
     property real simTime:      0.0
-    readonly property string mapCenterStr: "42.830°N / 20.350°E"
+    property bool missionAccepted: false
+    readonly property string mapCenterStr: "42.830°N / 20.295°E"
 
     Connections {
         target: simBus
@@ -281,9 +282,9 @@ ApplicationWindow {
                     anchors { fill: parent; topMargin: 28 }
 
                     // ── Map tile configuration ────────────────────────
-                    property real   mapCenterLat: 42.830
-                    property real   mapCenterLon: 20.350
-                    property int    tileZoom:     13      // ~14 m/px at this lat
+                    property real   mapCenterLat: 42.833
+                    property real   mapCenterLon: 20.295
+                    property int    tileZoom:     12      // wider view: ~28 m/px at this lat
                     property int    tileSize:     256
                     property string mapType:      "satellite"  // satellite | topo | osm
 
@@ -478,6 +479,29 @@ ApplicationWindow {
                         ctx.strokeStyle = "#F9A825"; ctx.lineWidth = 2
                         ctx.fill(); ctx.stroke()
                         lbl(ctx, label, x+10, y+4, detected ? "#FFD54F" : "#FFF9C4")
+                    }
+
+                    // ── Acoustic bearing line (detection cue) ──────────
+                    function drawAcousticBearing(ctx, lat, lon, bearingDeg) {
+                        // Draw a dashed yellow ray 4 km along the bearing
+                        var end = _geoMove(lat, lon, bearingDeg, 4000)
+                        var x0 = lonToX(lon), y0 = latToY(lat)
+                        var x1 = lonToX(end.lon), y1 = latToY(end.lat)
+                        ctx.save()
+                        ctx.setLineDash([6, 5])
+                        ctx.strokeStyle = "rgba(255, 213, 79, 0.75)"
+                        ctx.lineWidth = 1.5
+                        ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke()
+                        // Arrow tip
+                        ctx.setLineDash([])
+                        var ang = Math.atan2(y1 - y0, x1 - x0)
+                        ctx.fillStyle = "rgba(255, 213, 79, 0.75)"
+                        ctx.beginPath()
+                        ctx.moveTo(x1, y1)
+                        ctx.lineTo(x1 - 9*Math.cos(ang-0.4), y1 - 9*Math.sin(ang-0.4))
+                        ctx.lineTo(x1 - 9*Math.cos(ang+0.4), y1 - 9*Math.sin(ang+0.4))
+                        ctx.closePath(); ctx.fill()
+                        ctx.restore()
                     }
 
                     function drawSeismic(ctx, lat, lon, label, detected) {
@@ -740,11 +764,16 @@ ApplicationWindow {
                         drawTiles(ctx)
                         drawCorridor(ctx)
 
-                        // Acoustic — highlight when actively detecting
+                        // Acoustic — highlight + bearing line when detecting
                         var aco = root.acousticData
-                        drawAcoustic(ctx, 42.824, 20.195, "ACO-W", aco.length>0 && aco[0].detected)
-                        drawAcoustic(ctx, 42.833, 20.350, "ACO-C", aco.length>1 && aco[1].detected)
-                        drawAcoustic(ctx, 42.821, 20.500, "ACO-E", aco.length>2 && aco[2].detected)
+                        var acoPos = [[42.824,20.195],[42.833,20.350],[42.821,20.500]]
+                        for (var ai = 0; ai < 3; ai++) {
+                            var adet = aco.length > ai && aco[ai].detected
+                            drawAcoustic(ctx, acoPos[ai][0], acoPos[ai][1],
+                                         ["ACO-W","ACO-C","ACO-E"][ai], adet)
+                            if (adet && aco[ai].bearing !== undefined)
+                                drawAcousticBearing(ctx, acoPos[ai][0], acoPos[ai][1], aco[ai].bearing)
+                        }
 
                         // Seismic — highlight when actively detecting
                         var sei = root.seismicData
@@ -781,8 +810,8 @@ ApplicationWindow {
                             drawTarget(ctx, tgtLat, tgtLon)
                         }
 
-                        // Fused track: predicted route + uncertainty cone
-                        if (root.trackData && root.trackData.length > 0) {
+                        // Fused track: predicted route — shown only after mission accepted
+                        if (root.missionAccepted && root.trackData && root.trackData.length > 0) {
                             var trk = root.trackData[0]
                             drawPredictedRoute(ctx, trk.lat, trk.lon, trk.headingDeg, trk.speedMs, trk.confidence)
                         }
@@ -834,7 +863,7 @@ ApplicationWindow {
                                            v: root.threatLevel >= 3 ? "HIGH" : root.threatLevel >= 2 ? "MEDIUM" : "LOW"
                                            vc: root.threatLevel >= 3 ? root.c_armed : root.c_deploy }
                                 InfoRow { k: "Status";      v: "OPERATOR_APPROVED"; vc: "#90CAF9" }
-                                InfoRow { k: "Target";      v: "GROUND_VEHICLE";    vc: root.c_text }
+                                InfoRow { k: "Target";      v: "UAV_DRONE";         vc: root.c_text }
                                 InfoRow { k: "Confidence";
                                            v: root.trackData.length > 0 ? (root.trackData[0].confidence*100).toFixed(0) + "%" : "93%"
                                            vc: root.c_active }
@@ -976,15 +1005,25 @@ ApplicationWindow {
 
                 Item { Layout.fillWidth: true }
 
-                // Approve
+                // Approve / Accept Mission
                 Rectangle {
                     width: 150; height: 32; radius: 4
-                    color: hov.containsMouse ? "#1B5E20" : "#2E7D32"
+                    color: root.missionAccepted ? "#0D3E1A" :
+                           (hov.containsMouse && root.trackData.length > 0 ? "#1B5E20" : "#2E7D32")
+                    opacity: root.trackData.length > 0 || root.missionAccepted ? 1.0 : 0.4
                     border.color: "#4CAF50"; border.width: 1
-                    Text { anchors.centerIn: parent; text: "✔  APPROVE ACTION"
+                    Text { anchors.centerIn: parent
+                           text: root.missionAccepted ? "✔  MISSION ACCEPTED" : "✔  ACCEPT MISSION"
                            color: "#FFFFFF"; font { bold: true; pixelSize: 11 } }
                     HoverHandler { id: hov }
-                    TapHandler { onTapped: console.log("APPROVE ACTION clicked") }
+                    TapHandler {
+                        onTapped: {
+                            if (!root.missionAccepted && root.trackData.length > 0) {
+                                root.missionAccepted = true
+                                simBus.acceptMission()
+                            }
+                        }
+                    }
                 }
 
                 // Deny

@@ -2,9 +2,9 @@
 FakeTarget — simulates a hostile drone flying through the corridor.
 
 Trajectory:
-  Start  : (42.843°N, 20.310°E)  heading 135° (SE)  altitude 100 m  speed 120 km/h
-  Enters from the northwest boundary and crosses the sensor/UAV cluster heading southeast.
-  UAV radar detects immediately (~4 km, within 5 km range).
+  Start  : (42.848°N, 20.170°E)  heading 115° (ESE)  altitude 100 m  speed 120 km/h
+  Enters near NW corridor boundary.  First acoustic detection ~3 min in (crosses
+  within 1500 m of ACO-FIELD-01).  UAV radar locks at ~5–6 min.
 
 The drone holds a roughly straight course with small random-walk noise;
 heading is more stable than a ground vehicle (no road constraint).
@@ -65,15 +65,15 @@ class FakeTarget:
     """
 
     # Initial state
-    _START_LAT  =  42.843          # northern corridor boundary — northwest entry
-    _START_LON  =  20.310          # within UAV radar range (~4 km to orbit); visible on map
+    _START_LAT  =  42.848          # near northern boundary — northwest entry
+    _START_LON  =  20.170          # ~8 km west of acoustic cluster
     _ALTITUDE_M =  100.0           # AGL cruise altitude
     _SPEED_MS   =  120.0 / 3.6    # 120 km/h → 33.3 m/s
-    _HEADING    =  135.0           # SE — crosses sensor cluster heading toward corridor interior
+    _HEADING    =  115.0           # ESE — crosses sensor field heading toward corridor interior
 
-    # Corridor bounds — target becomes "exited" when outside
-    _LAT_MIN, _LAT_MAX = 42.817, 42.850
-    _LON_MIN, _LON_MAX = 20.166, 20.534
+    # Corridor bounds
+    _LAT_MIN, _LAT_MAX = 42.817, 42.855
+    _LON_MIN, _LON_MAX = 20.160, 20.540
 
     # Random-walk jitter (drone is more stable than a ground vehicle)
     _BEARING_NOISE_STD  = 1.0       # deg σ per tick

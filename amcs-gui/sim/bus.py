@@ -88,6 +88,11 @@ class SimBus(QObject):
         self._vel_buf.clear()
         self._timer.start()
 
+    @pyqtSlot()
+    def acceptMission(self) -> None:
+        """Operator accepted intercept mission — send UAV toward target."""
+        self._scenario.uav.start_intercept()
+
     # ── Private helpers ───────────────────────────────────────────────────
 
     def _smooth_velocity(self) -> tuple[float, float] | None:
@@ -171,17 +176,19 @@ class SimBus(QObject):
         }
         self.ugvUpdated.emit(ugv_d)
 
-        # Acoustic x3
+        # Acoustic x3 — include sensor position for bearing-line rendering in QML
         self.acousticUpdated.emit([
             {
                 "sensorId":    r.sensor_id,
+                "lat":         s._lat,
+                "lon":         s._lon,
                 "amplitudeDb": r.amplitude_db,
                 "bearing":     r.estimated_bearing,
                 "freqHz":      round(r.frequency_hz, 1),
                 "confidence":  r.detection_confidence,
                 "detected":    r.target_detected,
             }
-            for r in snap.acoustic_readings
+            for r, s in zip(snap.acoustic_readings, self._scenario.acoustic_sensors)
         ])
 
         # Seismic x3
