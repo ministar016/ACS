@@ -100,6 +100,7 @@ package "Autonomous Vehicles" #C8E6C9 {
   abstract class Device #C8E6C9 {
     - deviceId : String
     - type : DeviceType
+    - role : DeviceRole
     - status : DeviceStatus
     - location : GeoCoordinate
     - batteryLevel : Float
@@ -138,11 +139,22 @@ package "Sensor Layer" #FFF9C4 {
     - sensorId : String
     - type : SensorType
     - samplingRate : Float
+    - location : GeoCoordinate
+    - mountedOn : Device
     + startCapture() : void
     + stopCapture() : void
     + getData() : SensorData
     + calibrate() : void
+    + isStandalone() : Boolean
   }
+
+  note right of Sensor #FFF9C4
+    Acoustic and Seismic sensors
+    are standalone field units
+    (mountedOn = null).
+    Radar + Camera mounted on
+    both UAV (PVO) and UGV.
+  end note
 
   class AcousticSensor #FFF9C4 {
     - frequencyRange : FrequencyRange
@@ -186,7 +198,7 @@ package "Sensor Layer" #FFF9C4 {
     - sensors : List<Sensor>
     - fusionAlgorithm : FusionAlgorithm
     + fuseData(dataSet) : FusedData
-    + detectAnomalies(data) : List<Anomaly>
+    + detectAnomalies(data) : FusedData
     + applyKalmanFilter(data) : SensorData
   }
 }
@@ -264,6 +276,33 @@ package "Defence System" #FFCDD2 {
     + evaluate() : FeedbackAssessment
     + triggerRecalculation() : void
   }
+
+  abstract class WeaponSystem #FFCDD2 {
+    - systemId : String
+    - type : SystemType
+    - status : SystemStatus
+    - location : GeoCoordinate
+    - ammoCount : Integer
+    + arm() : void
+    + standDown() : void
+    + executeEngagement(action) : ActionResult
+    + reportStatus() : SystemStatus
+  }
+
+  class PVOSystem #EF9A9A {
+    - maxAltitude : Float
+    - trackingRadar : Boolean
+    - engagementRange : Float
+    + trackAirTarget(track) : void
+    + launchIntercept(target) : ActionResult
+  }
+
+  class GroundSystem #CE93D8 {
+    - maxRange : Float
+    - terrainFollowing : Boolean
+    + engageGroundTarget(target) : ActionResult
+    + calculateFireSolution(traj) : FireSolution
+  }
 }
 
 ' ============================================================
@@ -301,12 +340,20 @@ Sensor <|-- RadarSensor
 Sensor <|-- LiDARSensor
 Sensor <|-- CameraSensor
 
-' Aggregations
-Device "1..*" o-- "1..*" Sensor : contains >
+WeaponSystem <|-- PVOSystem
+WeaponSystem <|-- GroundSystem
+
+' UAV (PVO) carries Radar + Camera; UGV carries Radar + Camera
+' Acoustic/Seismic are standalone field units (mountedOn = null)
+UAV "1" o-- "1..*" RadarSensor : carries >
+UAV "1" o-- "1..*" CameraSensor : carries >
+UGV "1" o-- "1..*" RadarSensor : carries >
+UGV "1" o-- "1..*" CameraSensor : carries >
 
 ' Associations — Command & Control
 CommandCenter "1" --> "1..*" Operator : managed by >
 CommandCenter "1" --> "1..*" Device : monitors >
+CommandCenter "1" --> "1..*" WeaponSystem : controls >
 CommandCenter --> MissionController : delegates to >
 CommandCenter --> AlarmSystem : uses >
 CommandCenter --> AuditLog : logs via >
@@ -326,6 +373,7 @@ AlarmSystem --> DefenceController : activates >
 AlarmSystem --> Operator : notifies >
 DefenceController --> DefenceAction : creates >
 DefenceController "1" --> "1..*" Device : deploys >
+DefenceController "1" --> "1..*" WeaponSystem : fires >
 Operator --> DefenceAction : approves/denies >
 DefenceAction --> ActionFeedback : produces >
 ActionFeedback --> TrajectoryEstimator : triggers recalculation >

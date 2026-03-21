@@ -1,5 +1,5 @@
 @startuml object_diagram
-title Object Diagram — AMCS Runtime Instances\n(Active Mission MSN-2026-003, 2026-03-21 14:32 UTC)
+title Object Diagram — AMCS Runtime Instances\n(Active Mission MSN-2026-003, 2026-03-21 14:32 UTC)\nZone: 42.817–42.843°N / 20.166–20.534°E  [30 × 3 km corridor]
 
 skinparam backgroundColor #F0F4F8
 skinparam shadowing true
@@ -22,151 +22,239 @@ skinparam note {
 }
 
 ' ============================================================
-' MISSION
+' MISSION & OPERATOR
 ' ============================================================
-object "mission_03 : MissionController" as MISS #BBDEFB {
-  missionId = "MSN-2026-003"
-  status = MissionStatus.ACTIVE
-  startTime = "2026-03-21T14:00:00Z"
-  assignedZone = "ZONE-BRAVO"
+together {
+  object "mission_03 : MissionController" as MISS #BBDEFB {
+    missionId = "MSN-2026-003"
+    status = MissionStatus.ACTIVE
+    startTime = "2026-03-21T14:00:00Z"
+    assignedZone = "ZONE-BRAVO"
+    corridorBounds = "42.817-42.843°N / 20.166-20.534°E"
+  }
+
+  object "op_jovic : Operator" as OP #ECEFF1 {
+    operatorId = "OP-0042"
+    username = "jovic.m"
+    clearanceLevel = 3
+    assignedZone = "ZONE-BRAVO"
+  }
 }
 
 ' ============================================================
-' OPERATOR
+' STANDALONE FIELD SENSORS — Acoustic [x3]
+' Distributed evenly along 30 km corridor
 ' ============================================================
-object "op_jovic : Operator" as OP #ECEFF1 {
-  operatorId = "OP-0042"
-  username = "jovic.m"
-  clearanceLevel = 3
-  assignedZone = "ZONE-BRAVO"
-  lastLogin = "2026-03-21T08:00:00Z"
+together {
+  object "acoustic_field : AcousticSensor  [x3]" as ACO #FFF9C4 {
+    sensorId = "ACO-FIELD-{01..03}"
+    locations = "W:(42.824,20.195)  C:(42.833,20.350)  E:(42.821,20.500)"
+    spacing = "~10 km apart along corridor"
+    frequencyRange = "20Hz-20kHz"
+    sensitivity = -42.0
+    status = SensorStatus.ACTIVE
+    instanceCount = 3
+  }
+
+  object "seismic_field : SeismicSensor  [x3]" as SEI #FFF9C4 {
+    sensorId = "SEI-FIELD-{01..03}"
+    locations = "W:(42.831,20.225)  C:(42.818,20.370)  E:(42.829,20.485)"
+    spacing = "staggered between acoustic nodes"
+    sensitivity = -60.0
+    depthRange = 2.0
+    status = SensorStatus.ACTIVE
+    instanceCount = 3
+  }
 }
 
 ' ============================================================
-' DEVICES
+' UAV — PVO drone with Radar + Camera  (center-east of corridor)
 ' ============================================================
-object "uav_alpha : UAV" as UAV #C8E6C9 {
+object "uav_alpha : UAV" as UAV_A #C8E6C9 {
   deviceId = "UAV-ALPHA-001"
-  type = DeviceType.UAV
-  status = DeviceStatus.TRANSMITTING
-  location = GeoCoordinate(44.8125, 20.4612, 120.0)
+  role = DeviceRole.PVO_INTERCEPT
+  status = DeviceStatus.DEPLOYED
+  location = GeoCoordinate(42.832, 20.358, 150.0)
   batteryLevel = 78.5
-  altitude = 120.0
-  speed = 45.0
+  altitude = 150.0
+  speed = 65.0
   heading = 270.0
 }
 
+together {
+  object "radar_uav : RadarSensor" as RADAR_UAV #FFE082 {
+    sensorId = "RAD-UAV-ALPHA-01"
+    range = 5000.0
+    frequency = 77.0
+    status = SensorStatus.ACTIVE
+  }
+
+  object "cam_uav : CameraSensor" as CAM_UAV #FFE082 {
+    sensorId = "CAM-UAV-ALPHA-01"
+    resolution = Resolution.HD_1080P
+    fps = 30
+    nightVision = true
+    status = SensorStatus.ACTIVE
+  }
+}
+
+' ============================================================
+' UGV — carries Radar + Camera  (center of corridor)
+' ============================================================
 object "ugv_bravo : UGV" as UGV #A5D6A7 {
   deviceId = "UGV-BRAVO-002"
-  type = DeviceType.UGV
+  role = DeviceRole.GROUND_INTERCEPT
   status = DeviceStatus.DEPLOYING
-  location = GeoCoordinate(44.8100, 20.4590, 0.0)
+  location = GeoCoordinate(42.826, 20.342, 0.0)
   batteryLevel = 92.3
   terrainMode = TerrainMode.RUGGED
   speed = 25.0
 }
 
-' ============================================================
-' SENSORS (on uav_alpha)
-' ============================================================
-object "cam_01 : CameraSensor" as CAM #FFF9C4 {
-  sensorId = "CAM-UAV-ALPHA-01"
-  resolution = Resolution.HD_1080P
-  fps = 30
-  nightVision = true
-  status = SensorStatus.ACTIVE
-}
+together {
+  object "radar_ugv : RadarSensor" as RADAR_UGV #FFE082 {
+    sensorId = "RAD-UGV-BRAVO-01"
+    range = 5000.0
+    frequency = 77.0
+    status = SensorStatus.ACTIVE
+  }
 
-object "radar_01 : RadarSensor" as RAD #FFF9C4 {
-  sensorId = "RAD-UAV-ALPHA-01"
-  range = 5000.0
-  frequency = 77.0
-  status = SensorStatus.ACTIVE
-}
-
-object "lidar_01 : LiDARSensor" as LID #FFF9C4 {
-  sensorId = "LID-UAV-ALPHA-01"
-  pointsPerSecond = 100000
-  range = 200.0
-  status = SensorStatus.ACTIVE
-}
-
-object "acoustic_01 : AcousticSensor" as ACOU #FFF9C4 {
-  sensorId = "ACO-UAV-ALPHA-01"
-  frequencyRange = "20Hz-20kHz"
-  sensitivity = -42.0
-  status = SensorStatus.ACTIVE
+  object "cam_ugv : CameraSensor" as CAM_UGV #FFE082 {
+    sensorId = "CAM-UGV-BRAVO-01"
+    resolution = Resolution.HD_1080P
+    fps = 30
+    nightVision = true
+    status = SensorStatus.ACTIVE
+  }
 }
 
 ' ============================================================
-' ALARM & DEFENCE
+' PVO SYSTEMS — x4  (corners of corridor for 360° air coverage)
 ' ============================================================
-object "alarm_001 : Alarm" as ALARM #FFCDD2 {
-  alarmId = "ALM-20260321-001"
-  level = ThreatLevel.HIGH
-  status = AlarmStatus.OPERATOR_APPROVED
-  confidence = 0.93
-  timestamp = "2026-03-21T14:32:00Z"
-  targetLocation = GeoCoordinate(44.8115, 20.4605)
+object "pvo : PVOSystem  [x4]" as PVO #EF9A9A {
+  systemId = "PVO-{ALPHA-01, ALPHA-02, BETA-03, BETA-04}"
+  positions = "NW:(42.840,20.180)  NE:(42.839,20.525)"
+  positions2 = "SW:(42.817,20.185)  SE:(42.816,20.520)"
+  types = "SHORT_RANGE_AA (x2) | MEDIUM_RANGE_AA (x2)"
+  status_01_02 = SystemStatus.ARMED_READY
+  status_03_04 = SystemStatus.STANDBY
+  ammoCount = "8 / 8 / 4 / 4"
+  radarTracking = true
+  instanceCount = 4
 }
 
-object "action_001 : DefenceAction" as ACTION #EF9A9A {
-  actionId = "ACT-20260321-001"
-  type = ActionType.INTERCEPT
-  targetId = "TGT-001"
-  interceptPosition = GeoCoordinate(44.8110, 20.4600)
-  status = ActionStatus.DEPLOYING
-  approvedBy = "OP-0042"
+' ============================================================
+' ZEMLJA-ZEMLJA SISTEMI — x3  (southern edge, equal spacing)
+' ============================================================
+object "gg : GroundSystem  [x3]" as GG #CE93D8 {
+  systemId = "GG-{ZETA-01, ZETA-02, ZETA-03}"
+  positions = "W:(42.819,20.225)  C:(42.818,20.352)  E:(42.820,20.478)"
+  spacing = "~8.5 km apart along southern edge"
+  type = SystemType.GROUND_TO_GROUND
+  status_01_02 = SystemStatus.ARMED_READY
+  status_03 = SystemStatus.STANDBY
+  ammoCount = "12 / 12 / 10"
+  maxRange = 3000.0
+  instanceCount = 3
 }
 
-object "track_001 : Track" as TRACK #CE93D8 {
-  trackId = "TRK-20260321-001"
-  targetPosition = GeoCoordinate(44.8115, 20.4605)
-  velocity = 15.0
-  heading = 180.0
-  confidence = 0.93
+' ============================================================
+' ALARM & ACTIVE DEFENCE ACTION
+' ============================================================
+together {
+  object "alarm_001 : Alarm" as ALARM #FFCDD2 {
+    alarmId = "ALM-20260321-001"
+    level = ThreatLevel.HIGH
+    status = AlarmStatus.OPERATOR_APPROVED
+    confidence = 0.93
+    timestamp = "2026-03-21T14:32:00Z"
+    targetType = TargetType.GROUND_VEHICLE
+    targetLocation = GeoCoordinate(42.829, 20.363)
+  }
+
+  object "action_001 : DefenceAction" as ACTION #FFCDD2 {
+    actionId = "ACT-20260321-001"
+    type = ActionType.INTERCEPT
+    targetId = "TGT-001"
+    interceptPosition = GeoCoordinate(42.827, 20.355)
+    status = ActionStatus.DEPLOYING
+    approvedBy = "OP-0042"
+    assignedSystem = "UGV-BRAVO-002"
+  }
 }
 
-object "trajectory_001 : Trajectory" as TRAJ #E1BEE7 {
-  estimatedPath = "[44.8115->44.8100, 20.4605->20.4590]"
-  interceptPoint = GeoCoordinate(44.8110, 20.4600)
-  estimatedETA = "2026-03-21T14:35:00Z"
+together {
+  object "track_001 : Track" as TRACK #E1BEE7 {
+    trackId = "TRK-20260321-001"
+    targetPosition = GeoCoordinate(42.829, 20.363)
+    velocity = 15.0
+    heading = 200.0
+    confidence = 0.93
+  }
+
+  object "trajectory_001 : Trajectory" as TRAJ #E1BEE7 {
+    estimatedPath = "[42.829->42.827, 20.363->20.355]"
+    interceptPoint = GeoCoordinate(42.827, 20.355)
+    estimatedETA = "2026-03-21T14:35:00Z"
+  }
 }
 
 ' ============================================================
 ' LINKS
 ' ============================================================
-MISS "controls 1..*" -- UAV
-MISS "controls 1..*" -- UGV
-OP "monitors 1" -- MISS
+MISS "controls" -- UAV_A
+MISS "controls" -- UGV
+MISS "controls" -- PVO
+MISS "controls" -- GG
+MISS "monitors" -- ACO
+MISS "monitors" -- SEI
+OP "monitors" -- MISS
 OP "approved" ..> ACTION
 
-UAV "has sensor" -- CAM
-UAV "has sensor" -- RAD
-UAV "has sensor" -- LID
-UAV "has sensor" -- ACOU
+UAV_A "has sensor" -- RADAR_UAV
+UAV_A "has sensor" -- CAM_UAV
+UGV "has sensor" -- RADAR_UGV
+UGV "has sensor" -- CAM_UGV
 
-ALARM "triggered defence" ..> ACTION
+ALARM "triggered" ..> ACTION
 ACTION "targets" ..> TRACK
 TRACK "estimated by" ..> TRAJ
 UGV "deployed for" ..> ACTION
 
-note bottom of ALARM #FFCDD2
-  HIGH alarm at 14:32:00.
-  Detected by acoustic + radar
-  + camera fusion. Confidence: 93%.
-  Operator approved defence action.
+' ============================================================
+' NOTES
+' ============================================================
+note right of ACO #FFF9C4
+  Standalone sensors, NOT on vehicles.
+  Acoustic x3 + Seismic x3
+  spaced ~10 km along 30 km corridor.
+  Lat: 42.817–42.843°N
+  Lon: 20.166–20.534°E
 end note
 
-note right of UGV #C8E6C9
-  UGV deploying to intercept
-  position at 25 km/h.
-  Battery: 92.3%.
+note bottom of UAV_A #C8E6C9
+  PVO drone — center-east corridor.
+  Sensors: Radar (5km) + Camera HD.
+  Alt: 150m, Speed: 65 km/h.
 end note
 
-note left of TRAJ #E1BEE7
-  Kalman-predicted trajectory.
-  ETA to intercept: ~3 min.
+note bottom of UGV #A5D6A7
+  Ground vehicle — corridor center.
+  Sensors: Radar (5km) + Camera HD.
+  Speed: 25 km/h, Battery: 92.3%.
+end note
+
+note right of PVO #FFCDD2
+  4 systems at corridor corners:
+  NW/NE/SW/SE for full air coverage.
+  Short-range (01/02) ARMED.
+  Medium-range (03/04) STANDBY.
+end note
+
+note right of GG #CE93D8
+  3 systems on southern edge:
+  W / Center / E, spaced ~8.5 km.
+  GG-01/02 ARMED, GG-03 STANDBY.
 end note
 
 @enduml
