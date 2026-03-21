@@ -84,9 +84,10 @@ class FakeTarget:
     _LAT_MIN, _LAT_MAX = 42.817, 42.855
     _LON_MIN, _LON_MAX = 20.160, 20.540
 
-    # Random-walk jitter (drone is more stable than a ground vehicle)
-    _BEARING_NOISE_STD  = 1.0       # deg σ per tick
-    _SPEED_NOISE_STD    = 0.5       # m/s σ per tick
+    # Random-walk jitter — military drone autopilot is highly stable
+    # 0.05°/tick → σ ≈ 3° over 300 s (vs 55° with the old 1.0°/tick value)
+    _BEARING_NOISE_STD  = 0.05      # deg σ per tick
+    _SPEED_NOISE_STD    = 0.2       # m/s σ per tick
 
     def __init__(self, dt: float = 0.1, seed: int = 42) -> None:
         self._dt  = dt

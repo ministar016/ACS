@@ -69,6 +69,8 @@ class SimBus(QObject):
         self._tick_n     = 0
         # Rolling velocity buffer — smooths heading/speed over last 3 tracks
         self._vel_buf: deque[tuple[float, float]] = deque(maxlen=3)
+        # Time acceleration: run this many physics steps per timer fire
+        self._time_scale: int = 1
 
     # ── Public slots (callable from QML) ─────────────────────────────────
 
@@ -93,6 +95,11 @@ class SimBus(QObject):
         """Operator accepted intercept mission — send UAV toward target."""
         self._scenario.uav.start_intercept()
 
+    @pyqtSlot(int)
+    def setTimeScale(self, scale: int) -> None:
+        """Set simulation time multiplier (1×, 2×, 5×, 10×, 20×, 50×, …)."""
+        self._time_scale = max(1, min(50, scale))
+
     # ── Private helpers ───────────────────────────────────────────────────
 
     def _smooth_velocity(self) -> tuple[float, float] | None:
@@ -114,13 +121,20 @@ class SimBus(QObject):
     # ── Private tick ──────────────────────────────────────────────────────
 
     def _tick(self) -> None:
+        # Run _time_scale physics steps per timer fire; only the last
+        # snapshot is emitted to the GUI (keeps emit rate stable).
         snap = self._scenario.step()
         self._tick_n += 1
-
-        # Update velocity buffer every physics step (before emit check)
         if snap.tracks:
             t = snap.tracks[0]
             self._vel_buf.append((t.velocity.speed_ms, t.velocity.heading_deg))
+
+        for _ in range(self._time_scale - 1):
+            snap = self._scenario.step()
+            self._tick_n += 1
+            if snap.tracks:
+                t = snap.tracks[0]
+                self._vel_buf.append((t.velocity.speed_ms, t.velocity.heading_deg))
 
         # Throttle: emit GUI signals only every _emit_every ticks
         if self._tick_n % self._emit_every != 0:

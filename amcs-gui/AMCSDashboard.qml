@@ -69,7 +69,18 @@ ApplicationWindow {
     property int  threatLevel:  0
     property real simTime:      0.0
     property bool missionAccepted: false
+    property int  timeScale:       1
     readonly property string mapCenterStr: "42.830°N / 20.295°E"
+
+    // ── Mission prerequisites ─────────────────────────────────────
+    readonly property bool prereqTrack:      trackData.length > 0
+    readonly property bool prereqConfidence: trackData.length > 0 && trackData[0].confidence >= 0.5
+    readonly property bool prereqThreat:     threatLevel >= 2
+    readonly property bool prereqUav:        uavData !== null && uavData.batteryPct > 20
+                                             && uavData.status !== "ERROR"
+                                             && uavData.status !== "OFFLINE"
+    readonly property bool missionReady:     prereqTrack && prereqConfidence
+                                             && prereqThreat && prereqUav
 
     Connections {
         target: simBus
@@ -119,6 +130,32 @@ ApplicationWindow {
                     TopChip { label: "T+";
                                value: root.simTime.toFixed(1) + " s"
                                valueColor: root.c_warn }
+
+                    // ── Simulation speed buttons ────────────────────
+                    Row {
+                        spacing: 3
+                        anchors.verticalCenter: parent.verticalCenter
+                        Repeater {
+                            model: [1, 2, 5, 10, 20, 50]
+                            Rectangle {
+                                width: 28; height: 20; radius: 3
+                                color:        root.timeScale === modelData ? root.c_accent : "#0F2133"
+                                border.color: root.timeScale === modelData ? "#64B5F6"   : root.c_border
+                                border.width: 1
+                                Text { anchors.centerIn: parent
+                                       text: modelData + "×"
+                                       color: root.timeScale === modelData ? "#FFFFFF" : root.c_dim
+                                       font { pixelSize: 9; bold: true } }
+                                HoverHandler { id: spHov }
+                                TapHandler {
+                                    onTapped: {
+                                        root.timeScale = modelData
+                                        simBus.setTimeScale(modelData)
+                                    }
+                                }
+                            }
+                        }
+                    }
                     TopChip { label: "THREAT";
                                value: ["NONE","LOW","MEDIUM","HIGH"][root.threatLevel] || "NONE"
                                valueColor: root.threatLevel >= 3 ? root.c_armed :
@@ -990,7 +1027,7 @@ ApplicationWindow {
         // ── BOTTOM ACTION BAR ─────────────────────────────────────
         Rectangle {
             Layout.fillWidth: true
-            height: 54
+            height: 64
             color: "#0A1622"
             border.color: root.c_border; border.width: 1
 
@@ -1006,23 +1043,60 @@ ApplicationWindow {
                 Item { Layout.fillWidth: true }
 
                 // Approve / Accept Mission
-                Rectangle {
-                    width: 150; height: 32; radius: 4
-                    color: root.missionAccepted ? "#0D3E1A" :
-                           (hov.containsMouse && root.trackData.length > 0 ? "#1B5E20" : "#2E7D32")
-                    opacity: root.trackData.length > 0 || root.missionAccepted ? 1.0 : 0.4
-                    border.color: "#4CAF50"; border.width: 1
-                    Text { anchors.centerIn: parent
-                           text: root.missionAccepted ? "✔  MISSION ACCEPTED" : "✔  ACCEPT MISSION"
-                           color: "#FFFFFF"; font { bold: true; pixelSize: 11 } }
-                    HoverHandler { id: hov }
-                    TapHandler {
-                        onTapped: {
-                            if (!root.missionAccepted && root.trackData.length > 0) {
-                                root.missionAccepted = true
-                                simBus.acceptMission()
+                Column {
+                    spacing: 4
+                    Rectangle {
+                        width: 166; height: 32; radius: 4
+                        color: root.missionAccepted ? "#0D3E1A" :
+                               (hov.containsMouse && root.missionReady ? "#1B5E20" : "#2E7D32")
+                        opacity: root.missionReady || root.missionAccepted ? 1.0 : 0.4
+                        border.color: "#4CAF50"; border.width: 1
+                        Text { anchors.centerIn: parent
+                               text: root.missionAccepted ? "✔  MISSION ACCEPTED" : "✔  ACCEPT MISSION"
+                               color: "#FFFFFF"; font { bold: true; pixelSize: 11 } }
+                        HoverHandler { id: hov }
+                        TapHandler {
+                            onTapped: {
+                                if (!root.missionAccepted && root.missionReady) {
+                                    root.missionAccepted = true
+                                    simBus.acceptMission()
+                                }
                             }
                         }
+                    }
+                    // Prerequisites checklist
+                    Column {
+                        spacing: 1
+                        visible: !root.missionAccepted
+                        Repeater {
+                            model: [
+                                { label: "Track confirmed",   ok: root.prereqTrack },
+                                { label: "Confidence ≥ 50%",  ok: root.prereqConfidence },
+                                { label: "Threat ≥ MEDIUM",   ok: root.prereqThreat },
+                                { label: "UAV ready (bat>20)",ok: root.prereqUav },
+                            ]
+                            Row {
+                                spacing: 4
+                                Text {
+                                    text: modelData.ok ? "●" : "○"
+                                    color: modelData.ok ? root.c_active : root.c_dim
+                                    font { pixelSize: 8; bold: true }
+                                }
+                                Text {
+                                    text: modelData.label
+                                    color: modelData.ok ? root.c_text : root.c_dim
+                                    font.pixelSize: 8
+                                }
+                            }
+                        }
+                    }
+                    Text {
+                        visible: root.missionAccepted
+                        width: 166
+                        horizontalAlignment: Text.AlignHCenter
+                        text: "UAV intercept active"
+                        color: root.c_active
+                        font.pixelSize: 9
                     }
                 }
 

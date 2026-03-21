@@ -55,7 +55,7 @@ class UAV:
     def start_intercept(self) -> None:
         """Switch from holding orbit to active intercept."""
         self._intercept_mode = True
-        self.status = DeviceStatus.ACTIVE
+        self.status = DeviceStatus.DEPLOYING
 
     def step(self, target: FakeTarget, timestamp: float) -> UAVTelemetry:
         self._t += self._dt
