@@ -1,23 +1,47 @@
 @startuml seq_sensor_fusion
 title Sequence Diagram 2: Sensor Fusion & Target Identification (Controller 2)
 
-participant "SensorFusionEngine" as SFE
-participant "ThreatDetectionModule" as TDM
-participant "TargetTracker" as TT
-participant "TrajectoryEstimator" as TE
-participant "AlarmSystem" as AS
-participant "CommandCenter" as CC
+skinparam backgroundColor #F0F4F8
+skinparam shadowing true
+skinparam defaultFontName Helvetica
+skinparam sequenceMessageAlign center
+skinparam responseMessageBelowArrow true
+
+skinparam sequence {
+  ArrowColor #E65100
+  ArrowThickness 2
+  LifeLineBorderColor #BF360C
+  LifeLineBackgroundColor #FFF8E1
+  ParticipantBorderColor #BF360C
+  ParticipantBorderThickness 2
+  ParticipantFontStyle bold
+  DividerBackgroundColor #FFE0B2
+  DividerBorderColor #E65100
+  GroupBorderColor #4A148C
+  GroupBackgroundColor #F3E5F5
+  GroupFontColor #4A148C
+  NoteBackgroundColor #FFFDE7
+  NoteBorderColor #F9A825
+  BoxBackgroundColor #FFF3E0
+  BoxBorderColor #E65100
+}
+
+participant "SensorFusionEngine\n<<Kalman>>" as SFE #FFE082
+participant "ThreatDetectionModule\n<<AI/ML>>" as TDM #FFCC80
+participant "TargetTracker\n<<tracker>>" as TT  #FF8A65
+participant "TrajectoryEstimator\n<<Kalman>>" as TE #FFF9C4
+participant "AlarmSystem\n<<alarm>>" as AS #FFCDD2
+participant "CommandCenter\n<<control>>" as CC #BBDEFB
 actor "Operator" as OP
 
-note over SFE, OP
-  Controller 2: Receives pre-processed data
-  from Controller 1. Fuses data, identifies
-  targets with AI, estimates trajectory,
-  and generates alarm for Operator.
+note over SFE, OP #FFF3E0
+  Controller 2: Receives pre-processed data from Controller 1.
+  Fuses multi-sensor data, identifies targets with AI,
+  estimates trajectory, generates alarm for Operator.
 end note
 
 == Sensor Fusion ==
-activate SFE
+activate SFE #FFD54F
 SFE -> SFE : synchronizeTimestamps()
 SFE -> SFE : applyKalmanFilter()
 SFE -> SFE : mergeDetections()
@@ -26,7 +50,7 @@ SFE -> SFE : computeConfidenceScore()
 
 SFE -> TDM : analyzeData(fusedData)
 deactivate SFE
-activate TDM
+activate TDM #FFB74D
 
 == AI Target Identification ==
 TDM -> TDM : runMLInference(fusedData)
@@ -40,46 +64,52 @@ alt Target Identified (confidence > 0.85)
 
   == Target Tracking ==
   TDM -> TT : initTrack(detectedTarget)
-  activate TT
+  activate TT #FF7043
   TT -> TT : assignTrackId()
   TT -> TT : setInitialState(position, velocity)
-  TT --> TDM : Track
+  TT --> TDM : Track {trackId, position, velocity}
   deactivate TT
 
   == Trajectory Estimation ==
   TDM -> TE : estimateTrajectory(track)
-  activate TE
+  activate TE #FFF176
   TE -> TE : applyKalmanPrediction()
   TE -> TE : predictInterceptPoint()
-  TE --> TDM : Trajectory
+  TE --> TDM : Trajectory {path, interceptPoint, ETA}
   deactivate TE
 
   == Generate Alarm ==
   TDM -> AS : createAlarm(threat, trajectory)
-  activate AS
+  activate AS #EF9A9A
   AS -> AS : assignAlarmId()
   AS -> AS : setPriority(threatLevel)
   AS -> CC : broadcastAlarm(alarm)
-  AS -> OP : notifyOperator(alarm, targetData)
+  activate CC #BBDEFB
+  CC --> AS : ack
+  deactivate CC
+  AS -> OP : notifyOperator(alarm, targetData, map)
   deactivate AS
 
 else No Target (confidence <= 0.85)
 
-  TDM --> SFE : continue monitoring
+  TDM --> SFE : continueMonitoring()
 
 end
 
 deactivate TDM
 
-note over TDM
+note over TDM #FFE082
   AI model: ONNX classifier
   Confidence threshold: 0.85
+  Classifies: UGV / UAV /
+  Person / Vehicle
 end note
 
-note over TE
-  Kalman-based trajectory prediction.
-  Intercept point calculated for
-  defence system positioning.
+note over TE #FFF9C4
+  Kalman prediction:
+  position + velocity vector.
+  Intercept point for
+  defence positioning.
 end note
 
 @enduml

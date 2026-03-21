@@ -1,105 +1,132 @@
 @startuml seq_feedback_loop
 title Sequence Diagram 4: Action Feedback Loop (Hit / Miss)
 
-actor "Operator" as OP
-participant "CommandCenter" as CC
-participant "DefenceController" as DC
-participant "ActionFeedback" as AF
-participant "TrajectoryEstimator" as TE
-participant "TargetTracker" as TT
-participant "AlarmSystem" as AS
-participant "AuditLog" as AUDIT
+skinparam backgroundColor #F0F4F8
+skinparam shadowing true
+skinparam defaultFontName Helvetica
+skinparam sequenceMessageAlign center
+skinparam responseMessageBelowArrow true
 
-note over OP, AUDIT
-  After defence action execution,
-  system evaluates result (hit/miss)
-  and takes appropriate next steps.
+skinparam sequence {
+  ArrowColor #4A148C
+  ArrowThickness 2
+  LifeLineBorderColor #6A1B9A
+  LifeLineBackgroundColor #F3E5F5
+  ParticipantBorderColor #6A1B9A
+  ParticipantBorderThickness 2
+  ParticipantFontStyle bold
+  ActorBorderColor #1B3A5C
+  ActorBackgroundColor #1B3A5C
+  ActorFontColor white
+  DividerBackgroundColor #E1BEE7
+  DividerBorderColor #6A1B9A
+  GroupBorderColor #1B5E20
+  GroupBackgroundColor #E8F5E9
+  GroupFontColor #1B5E20
+  NoteBackgroundColor #FFFDE7
+  NoteBorderColor #F9A825
+  BoxBackgroundColor #F3E5F5
+  BoxBorderColor #6A1B9A
+}
+
+actor "Operator" as OP
+participant "CommandCenter\n<<control>>" as CC #BBDEFB
+participant "DefenceController\n<<defence>>" as DC #EF9A9A
+participant "ActionFeedback\n<<evaluation>>" as AF #CE93D8
+participant "TrajectoryEstimator\n<<Kalman>>" as TE #FFF9C4
+participant "TargetTracker\n<<tracker>>" as TT #FFCC80
+participant "AlarmSystem\n<<alarm>>" as AS #FFCDD2
+participant "AuditLog\n<<log>>" as AUDIT #ECEFF1
+
+note over OP, AUDIT #F3E5F5
+  Feedback loop: system evaluates result (hit/miss)
+  and takes appropriate next action.
 end note
 
 == Receive Action Result ==
 DC -> AF : submitResult(actionId, result)
-activate AF
+activate AF #CE93D8
 AF -> AF : evaluate(result)
 AF -> AF : determineHitOrMiss()
 
-alt HIT - Mission Accomplished
+alt HIT — Mission Accomplished
 
   AF -> CC : reportSuccess(actionId, targetId)
-  activate CC
+  activate CC #BBDEFB
 
-  CC -> AS : resolveAlarm(alarmId)
-  activate AS
+  CC -> AS : resolveAlarm(alarmId, TARGET_NEUTRALIZED)
+  activate AS #FFCDD2
   AS -> AS : setStatus(RESOLVED)
   AS --> CC : alarmResolved
   deactivate AS
 
   CC -> DC : standDown(actionId)
+  activate DC #EF9A9A
   DC -> DC : setStatus(STANDBY)
   DC -> DC : recallDevice()
+  deactivate DC
 
   CC -> TT : closeTrack(trackId)
-  activate TT
+  activate TT #FFCC80
   TT -> TT : archiveTrackData()
   TT --> CC : trackClosed
   deactivate TT
 
-  CC -> AUDIT : logEvent(MISSION_ACCOMPLISHED)
-  CC -> OP : Mission Accomplished
+  CC -> AUDIT : logEvent(MISSION_ACCOMPLISHED, actionId, targetId)
+  CC -> OP : Mission Accomplished — Target Neutralized
 
   deactivate CC
 
-else MISS - Recalculate Defence
+else MISS — Recalculate Defence
 
   AF -> CC : reportMiss(actionId, missData)
-  activate CC
-
-  CC -> OP : MISS - Recalculating
+  activate CC #BBDEFB
+  CC -> OP : MISS — Recalculating defence action
 
   == Recalculate Trajectory ==
   CC -> TT : getLatestTrackData(trackId)
-  activate TT
+  activate TT #FFCC80
   TT -> TT : updateWithLatestSensorData()
   TT --> CC : updatedTrack
   deactivate TT
 
-  CC -> TE : recalculateTrajectory(updatedTrack)
-  activate TE
-  TE -> TE : adjustKalmanParameters()
+  CC -> TE : recalculateTrajectory(updatedTrack, missData)
+  activate TE #FFF9C4
+  TE -> TE : adjustKalmanParameters(missData)
   TE -> TE : recalculateInterceptPoint()
-  TE --> CC : newTrajectory
+  TE --> CC : newTrajectory {newPath, newInterceptPoint, newETA}
   deactivate TE
 
   == New Defence Action ==
   CC -> AS : updateAlarm(alarmId, newTrajectory)
-  activate AS
+  activate AS #FFCDD2
   AS -> AS : setStatus(RECALCULATING)
   AS -> OP : New intercept calculated
   deactivate AS
 
-  CC -> DC : prepareNewAction(targetId)
-  activate DC
+  CC -> DC : prepareNewAction(targetId, newInterceptPoint)
+  activate DC #EF9A9A
   DC -> DC : setStatus(GET_READY)
   DC -> DC : selectDevice(newInterceptPoint)
-  DC --> CC : newDefenceAction
+  DC --> CC : newDefenceAction {newActionId, device, interceptPos}
   deactivate DC
 
   CC -> OP : requestApproval(newDefenceAction)
 
-  == Operator Re-approval ==
-  OP -> CC : decision(newActionId)
+  OP -> CC : decision(newActionId, APPROVE or DENY)
 
   alt Re-APPROVED
-    CC -> DC : deployToIntercept(newPosition)
-    CC -> AUDIT : logEvent(REDEPLOYMENT)
-    note right
+    CC -> DC : deployToIntercept(newInterceptPosition)
+    CC -> AUDIT : logEvent(REDEPLOYMENT, newActionId)
+    note right #DCEDC8
       Loop continues until
-      hit or operator denies
+      HIT or operator DENIES
     end note
   else DENIED
-    CC -> AS : resolveAlarm(alarmId, ABORT)
+    CC -> AS : resolveAlarm(alarmId, OPERATOR_ABORT)
     CC -> DC : standDown(newActionId)
-    CC -> AUDIT : logEvent(MISSION_ABORTED)
-    CC -> OP : Mission aborted
+    CC -> AUDIT : logEvent(MISSION_ABORTED, alarmId)
+    CC -> OP : Mission aborted — returning to monitoring
   end
 
   deactivate CC
@@ -108,16 +135,16 @@ end
 
 deactivate AF
 
-note over AF
-  ActionFeedback evaluates:
-  - Sensor confirmation of hit
-  - Target status after engagement
+note over AF #CE93D8
+  Evaluates:
+  - Sensor hit confirmation
+  - Target status post-action
 end note
 
-note over TE
-  On miss, Kalman filter parameters
-  are adjusted to improve
-  next prediction accuracy.
+note over TE #FFF0CC
+  On MISS: Kalman parameters
+  adjusted based on miss data
+  to improve next prediction.
 end note
 
 @enduml

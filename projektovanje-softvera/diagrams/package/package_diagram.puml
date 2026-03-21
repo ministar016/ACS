@@ -1,31 +1,49 @@
 @startuml package_diagram
 title Package Diagram — AMCS Module Organization
 
+skinparam backgroundColor #F0F4F8
+skinparam shadowing true
+skinparam defaultFontName Helvetica
+skinparam defaultFontSize 11
+skinparam roundCorner 8
+
 skinparam package {
-  BackgroundColor LightYellow
-  BorderColor DarkOrange
-  FontSize 13
+  BorderThickness 2
+  FontStyle bold
+  FontSize 12
 }
+
 skinparam class {
-  BackgroundColor White
-  BorderColor Gray
-  FontSize 11
+  BackgroundColor #FFFFFF
+  BorderColor #78909C
+  BorderThickness 1
+  FontSize 10
 }
 
-package "amcs" {
+skinparam note {
+  BackgroundColor #FFFDE7
+  BorderColor #F9A825
+}
 
-  package "amcs.presentation" #DDEEFF {
-    package "amcs.presentation.dashboard" {
+skinparam arrow {
+  Color #37474F
+  Thickness 2
+}
+
+package "amcs" #F8FBFF {
+
+  package "amcs.presentation" #BBDEFB {
+    package "amcs.presentation.dashboard" #E3F2FD {
       class DashboardController
       class MapViewComponent
       class TelemetryWidget
     }
-    package "amcs.presentation.alarms" {
+    package "amcs.presentation.alarms" #FFCDD2 {
       class AlarmConsoleController
       class AlarmListView
       class AlarmDetailView
     }
-    package "amcs.presentation.map" {
+    package "amcs.presentation.map" #E3F2FD {
       class BattlefieldMapView
       class DeviceMarker
       class ThreatOverlay
@@ -33,18 +51,18 @@ package "amcs" {
     }
   }
 
-  package "amcs.api" #E8FFE8 {
-    package "amcs.api.gateway" {
+  package "amcs.api" #C8E6C9 {
+    package "amcs.api.gateway" #E8F5E9 {
       class GatewayRouter
       class RequestLogger
     }
-    package "amcs.api.controllers" {
+    package "amcs.api.controllers" #E8F5E9 {
       class CommandController
       class MissionController
       class AlarmController
       class DefenceController
     }
-    package "amcs.api.dto" {
+    package "amcs.api.dto" #E8F5E9 {
       class CommandRequest
       class CommandResponse
       class AlarmDTO
@@ -52,19 +70,19 @@ package "amcs" {
     }
   }
 
-  package "amcs.domain" #FFF8E1 {
-    package "amcs.domain.command" {
+  package "amcs.domain" #FFF9C4 {
+    package "amcs.domain.command" #FFFDE7 {
       class CommandCenter
       class Command
       class MissionControllerService
     }
-    package "amcs.domain.devices" {
+    package "amcs.domain.devices" #FFFDE7 {
       abstract class Device
       class UAV
       class UGV
       class DeviceRegistry
     }
-    package "amcs.domain.sensors" {
+    package "amcs.domain.sensors" #FFFDE7 {
       abstract class Sensor
       class AcousticSensor
       class SeismicSensor
@@ -73,54 +91,54 @@ package "amcs" {
       class CameraSensor
       class SensorFusionEngine
     }
-    package "amcs.domain.users" {
+    package "amcs.domain.users" #FFFDE7 {
       class Operator
     }
   }
 
-  package "amcs.processing" #F0E8FF {
-    package "amcs.processing.fusion" {
+  package "amcs.processing" #E1BEE7 {
+    package "amcs.processing.fusion" #F3E5F5 {
       class SensorFusionPipeline
       class KalmanFilter
       class DataSynchronizer
       class ConflictResolver
     }
-    package "amcs.processing.detection" {
+    package "amcs.processing.detection" #F3E5F5 {
       class ThreatDetectionModule
       class DetectionRule
       class MLInferenceEngine
       class ThreatClassifier
     }
-    package "amcs.processing.tracking" {
+    package "amcs.processing.tracking" #F3E5F5 {
       class TargetTracker
       class Track
       class TrajectoryEstimator
     }
   }
 
-  package "amcs.defence" #FFE4E4 {
-    package "amcs.defence.controller" {
+  package "amcs.defence" #FFCDD2 {
+    package "amcs.defence.controller" #FFEBEE {
       class DefenceControllerService
       class DefenceAction
       class ActionFeedback
     }
-    package "amcs.defence.alarm" {
+    package "amcs.defence.alarm" #FFEBEE {
       class AlarmSystem
       class Alarm
       class AlarmPriority
     }
   }
 
-  package "amcs.infrastructure" #EAEAEA {
-    package "amcs.infrastructure.persistence" {
+  package "amcs.infrastructure" #ECEFF1 {
+    package "amcs.infrastructure.persistence" #F5F5F5 {
       class MissionRepository
       class SensorDataRepository
     }
-    package "amcs.infrastructure.crypto" {
+    package "amcs.infrastructure.crypto" #F5F5F5 {
       class EncryptionService
       class KeyManager
     }
-    package "amcs.infrastructure.logging" {
+    package "amcs.infrastructure.logging" #F5F5F5 {
       class AuditLog
       class LogEntry
       class AuditLogRepository
@@ -142,14 +160,14 @@ package "amcs" {
 "amcs.defence" ..> "amcs.domain" : <<uses>>
 "amcs.defence" ..> "amcs.infrastructure" : <<uses>>
 
-note bottom of "amcs.infrastructure"
+note bottom of "amcs.infrastructure" #ECEFF1
   Infrastructure provides:
   persistence, encryption,
   and audit logging for
   all other layers.
 end note
 
-note top of "amcs.defence"
+note top of "amcs.defence" #FFCDD2
   Defence package orchestrates:
   alarm generation, defence
   actions, and feedback loops.

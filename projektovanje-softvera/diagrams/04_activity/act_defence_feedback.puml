@@ -1,111 +1,167 @@
 @startuml act_defence_feedback
 title Activity Diagram 2: Defence Action Feedback Loop (Hit / Miss)
 
-skinparam ActivityBackgroundColor LightYellow
-skinparam ActivityBorderColor DarkOrange
+skinparam backgroundColor #F0F4F8
+skinparam shadowing true
+skinparam defaultFontName Helvetica
+skinparam defaultFontSize 11
 
-|#FFE4E4|Defence Controller|
-|#F0E8FF|Target Tracking|
-|#ADD8E6|Operator|
-|#FFF8E7|Alarm System|
-|#EAEAEA|Audit Log|
+skinparam activity {
+  BackgroundColor #EAF4FB
+  BorderColor #2471A3
+  BorderThickness 2
+  FontColor #1A2F45
+  DiamondBackgroundColor #FFF9C4
+  DiamondBorderColor #E65100
+  DiamondFontColor #BF360C
+  ArrowColor #4A148C
+  ArrowThickness 2
+  StartColor #1B3A5C
+  EndColor #B71C1C
+}
+
+skinparam swimlane {
+  BorderColor #555555
+  BorderThickness 2
+  TitleBackgroundColor #37474F
+  TitleFontColor #FFFFFF
+  TitleFontStyle bold
+}
+
+skinparam note {
+  BackgroundColor #FFFDE7
+  BorderColor #F9A825
+}
+
+|#FFD7D7|Defence Controller|
+|#E1D5E7|Target Tracking|
+|#DAE8FC|Operator|
+|#FFE6CC|Alarm System|
+|#D5E8D4|Audit Log|
 
 |Defence Controller|
 start
-:Receive action result
+#EF9A9A:Receive action result
 from deployed device;
-:Evaluate engagement result;
+#EF9A9A:Evaluate engagement result;
 
 if (Target neutralized?) then (HIT)
-  :Set action status = SUCCESS;
+
+  #C8E6C9:Set action status = SUCCESS;
 
   |Alarm System|
-  :Resolve alarm
+  #A5D6A7:Resolve alarm
   status = RESOLVED;
 
   |Target Tracking|
-  :Close target track;
-  :Archive track data;
+  #C8E6C9:Close target track;
+  #C8E6C9:Archive track data;
 
   |Defence Controller|
-  :Recall device to base;
-  :Set defence status = STANDBY;
+  #A5D6A7:Recall device to base;
+  #A5D6A7:Set defence status = STANDBY;
 
   |Operator|
-  :Display Mission Accomplished;
+  #C8E6C9:Display: Mission Accomplished
+  Target Neutralized;
 
   |Audit Log|
-  :Record MISSION_ACCOMPLISHED;
+  #C8E6C9:Record MISSION_ACCOMPLISHED
+  {actionId, targetId, duration};
   stop
 
 else (MISS)
-  :Set action status = MISS;
-  :Analyze miss data;
+
+  #FFCC80:Set action status = MISS;
+  #FFCC80:Analyze miss data
+  (deviation, distance, conditions);
 
   |Target Tracking|
-  :Update track with new sensor data;
-  :Confirm target still active;
+  #E1BEE7:Update track with
+  new sensor data;
+  #E1BEE7:Confirm target still active;
 
   if (Target still tracked?) then (yes)
-    :Recalculate target position
+
+    #CE93D8:Recalculate target position
     and velocity vector;
 
     |Defence Controller|
-    :Request trajectory recalculation;
-    :Receive new intercept point;
-    :Prepare new defence action;
+    #FFCC80:Request trajectory
+    recalculation;
+    #FFCC80:Receive new intercept point;
+    #FF8A65:Prepare new defence action;
 
     |Alarm System|
-    :Update alarm status = RECALCULATING;
-    :Update alarm with new trajectory;
+    #FFB74D:Update alarm
+    status = RECALCULATING;
+    #FFB74D:Update alarm with
+    new trajectory;
 
     |Operator|
-    :Display MISS - New intercept calculated;
-    :Present new defence action
+    #BBDEFB:Display: MISS
+    New intercept calculated;
+    #BBDEFB:Present new defence action
     for approval;
 
-    if (Operator approves?) then (APPROVE)
+    if (Operator approves new action?) then (APPROVE)
+
       |Defence Controller|
-      :Redeploy device to
+      #EF9A9A:Redeploy device to
       new intercept position;
-      :Set defence status = REDEPLOYED;
+      #EF9A9A:Set defence status = REDEPLOYED;
 
       |Audit Log|
-      :Record REDEPLOYMENT;
+      #FFF9C4:Record REDEPLOYMENT
+      {newActionId, attempt, timestamp};
 
       |Defence Controller|
+      note right
+        Loops back to engagement.
+        Repeats until HIT or ABORT.
+      end note
       stop
 
     else (DENY / ABORT)
+
       |Defence Controller|
-      :Recall device;
-      :Set defence status = STANDBY;
+      #E0E0E0:Recall device;
+      #E0E0E0:Set defence status = STANDBY;
 
       |Alarm System|
-      :Set alarm status = OPERATOR_ABORT;
+      #FFCDD2:Set alarm
+      status = OPERATOR_ABORT;
 
       |Operator|
-      :Display Mission aborted;
+      #E0E0E0:Display: Mission aborted
+      Returning to monitoring;
 
       |Audit Log|
-      :Record MISSION_ABORTED;
+      #FFCDD2:Record MISSION_ABORTED
+      {alarmId, operatorId, attempts};
       stop
+
     endif
 
-  else (no - target lost)
+  else (no — target lost)
+
     |Defence Controller|
-    :Recall device;
-    :Set defence status = STANDBY;
+    #E0E0E0:Recall device;
+    #E0E0E0:Set defence status = STANDBY;
 
     |Alarm System|
-    :Set alarm status = TARGET_LOST;
+    #FFE0B2:Set alarm
+    status = TARGET_LOST;
 
     |Operator|
-    :Display Target lost;
+    #E0E0E0:Display: Target lost
+    Returning to monitoring;
 
     |Audit Log|
-    :Record TARGET_LOST;
+    #FFE082:Record TARGET_LOST
+    {trackId, lastKnownPosition};
     stop
+
   endif
 
 endif

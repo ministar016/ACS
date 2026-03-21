@@ -1,74 +1,91 @@
 @startuml deployment_diagram
 title Deployment Diagram — AMCS Physical Architecture
 
+skinparam backgroundColor #F0F4F8
+skinparam shadowing true
+skinparam defaultFontName Helvetica
+skinparam defaultFontSize 11
+
 skinparam node {
-  BackgroundColor LightBlue
-  BorderColor DarkBlue
+  BackgroundColor #EAF4FB
+  BorderColor #2471A3
+  BorderThickness 2
+  FontColor #1A2F45
+  FontStyle bold
 }
+
 skinparam artifact {
-  BackgroundColor LightYellow
-  BorderColor DarkOrange
+  BackgroundColor #FFF9C4
+  BorderColor #E65100
+  BorderThickness 2
 }
+
 skinparam database {
-  BackgroundColor LightGreen
-  BorderColor DarkGreen
+  BackgroundColor #C8E6C9
+  BorderColor #2E7D32
+  BorderThickness 2
+}
+
+skinparam note {
+  BackgroundColor #FFFDE7
+  BorderColor #F9A825
 }
 
 ' ============================================================
 ' COMMAND CENTER HQ
 ' ============================================================
-node "Command Center HQ\n<<Secure Facility>>" as HQ {
+node "Command Center HQ\n<<Secure Facility>>" as HQ #BBDEFB {
 
-  node "Operator Workstation\n<<Linux PC>>" as OWS {
-    artifact "Operator Dashboard\n<<React Browser App>>" as DASH
-    artifact "Alarm Console\n<<Browser App>>" as ALARM_UI
-    artifact "Map Viewer\n<<Browser App>>" as MAP_UI
+  node "Operator Workstation\n<<Linux PC>>" as OWS #90CAF9 {
+    artifact "Operator Dashboard\n<<React Browser App>>" as DASH #E3F2FD
+    artifact "Alarm Console\n<<Browser App>>" as ALARM_UI #FFCDD2
+    artifact "Map Viewer\n<<Browser App>>" as MAP_UI #E3F2FD
   }
 
-  node "Application Server\n<<Linux — Docker>>" as APP {
-    artifact "API Gateway\n<<Docker: nginx>>" as GW_ART
-    artifact "Command & Control Service\n<<Docker: Python/FastAPI>>" as CMD_ART
-    artifact "Mission Controller Service\n<<Docker: Python/FastAPI>>" as MISS_ART
-    artifact "Alarm Service\n<<Docker: Python/FastAPI>>" as ALARM_ART
-    artifact "Defence Controller Service\n<<Docker: Python/FastAPI>>" as DEF_ART
-    artifact "Encryption Service\n<<Docker: Python>>" as ENC_ART
+  node "Application Server\n<<Linux — Docker Compose>>" as APP #C8E6C9 {
+    artifact "API Gateway\n<<nginx>>" as GW_ART #A5D6A7
+    artifact "Command & Control Service\n<<FastAPI>>" as CMD_ART #A5D6A7
+    artifact "Mission Controller Service\n<<FastAPI>>" as MISS_ART #A5D6A7
+    artifact "Alarm Service\n<<FastAPI>>" as ALARM_ART #FFCDD2
+    artifact "Defence Controller Service\n<<FastAPI>>" as DEF_ART #EF9A9A
+    artifact "Encryption Service\n<<Python>>" as ENC_ART #ECEFF1
   }
 
-  node "Data Server\n<<Linux>>" as DATA_SRV {
+  node "Data Server\n<<Linux>>" as DATA_SRV #E8F5E9 {
     database "PostgreSQL\n<<Mission DB>>" as PSQL
     database "TimescaleDB\n<<Sensor Time-Series>>" as TSDB
     database "MongoDB\n<<Audit Logs>>" as MONGO
   }
 
-  node "AI Processing Server\n<<Linux — GPU>>" as AI_SRV {
-    artifact "Sensor Fusion Engine\n<<Python/NumPy>>" as FUSION_ART
-    artifact "Threat Detector\n<<ONNX Runtime>>" as ONNX_ART
-    artifact "Target Tracker\n<<Python/SciPy>>" as TRACK_ART
-    artifact "Trajectory Estimator\n<<Python/SciPy>>" as TRAJ_ART
+  node "AI Processing Server\n<<Linux — GPU>>" as AI_SRV #FFF9C4 {
+    artifact "Sensor Fusion Engine\n<<Python/NumPy>>" as FUSION_ART #FFE082
+    artifact "Threat Detector\n<<ONNX Runtime>>" as ONNX_ART #FFCC80
+    artifact "Target Tracker\n<<Python/SciPy>>" as TRACK_ART #FF8A65
+    artifact "Trajectory Estimator\n<<Python/SciPy>>" as TRAJ_ART #FFF176
   }
 }
 
 ' ============================================================
 ' FIELD OPERATIONS
 ' ============================================================
-node "Field Operations Zone" as FIELD {
+node "Field Operations Zone" as FIELD #E1BEE7 {
 
-  node "UAV Unit\n<<Embedded Linux — ARM>>" as UAV {
-    artifact "UAV Firmware\n<<ROS2 Node>>" as UAV_FW
-    artifact "Camera Driver\n<<OpenCV>>" as CAM_DRV
-    artifact "Radar Driver\n<<Custom C++>>" as RADAR_DRV
-    artifact "LiDAR Driver\n<<ROS2 PointCloud2>>" as LIDAR_DRV
-    artifact "Acoustic Sensor Driver\n<<ROS2>>" as ACOU_DRV
-    artifact "Edge Processor\n<<ONNX Runtime — int8>>" as UAV_EDGE
-    artifact "Comms Module\n<<Encrypted Radio>>" as UAV_RADIO
+  node "UAV Unit\n<<Embedded Linux — ARM>>" as UAV #CE93D8 {
+    artifact "UAV Firmware\n<<ROS2 Node>>" as UAV_FW #E1BEE7
+    artifact "Camera Driver\n<<OpenCV>>" as CAM_DRV #E1BEE7
+    artifact "Radar Driver\n<<Custom C++>>" as RADAR_DRV #E1BEE7
+    artifact "LiDAR Driver\n<<ROS2 PointCloud2>>" as LIDAR_DRV #E1BEE7
+    artifact "Acoustic Sensor Driver\n<<ROS2>>" as ACOU_DRV #E1BEE7
+    artifact "Edge Processor\n<<ONNX Runtime int8>>" as UAV_EDGE #FFF176
+    artifact "Comms Module\n<<Encrypted Radio>>" as UAV_RADIO #FFCDD2
   }
 
-  node "UGV Unit\n<<Embedded Linux — x86>>" as UGV {
-    artifact "UGV Firmware\n<<ROS2 Node>>" as UGV_FW
-    artifact "Sensor Array Driver\n<<ROS2>>" as UGV_SENSORS
-    artifact "Seismic Sensor Driver\n<<ROS2>>" as SEIS_DRV
-    artifact "Edge Processor\n<<ONNX Runtime — int8>>" as UGV_EDGE
-    artifact "Comms Module\n<<Encrypted Radio>>" as UGV_RADIO
+  node "UGV Unit\n<<Embedded Linux — x86>>" as UGV #CE93D8 {
+    artifact "UGV Firmware\n<<ROS2 Node>>" as UGV_FW #E1BEE7
+    artifact "Sensor Array Driver\n<<ROS2>>" as UGV_SENSORS #E1BEE7
+    artifact "Seismic Sensor Driver\n<<ROS2>>" as SEIS_DRV #E1BEE7
+    artifact "Edge Processor\n<<ONNX Runtime int8>>" as UGV_EDGE #FFF176
+    artifact "Comms Module\n<<Encrypted Radio>>" as UGV_RADIO #FFCDD2
   }
 }
 
@@ -83,14 +100,14 @@ AI_SRV ..> DATA_SRV : JDBC / TCP
 UAV_RADIO ..> APP : Encrypted Radio Link\n<<AES-256-GCM>>
 UGV_RADIO ..> APP : Encrypted Radio Link\n<<AES-256-GCM>>
 
-note bottom of UAV
+note bottom of UAV #E1BEE7
   Edge pre-processing reduces
   uplink bandwidth by ~80%.
   Sensors: Camera, Radar, LiDAR,
   Acoustic
 end note
 
-note bottom of UGV
+note bottom of UGV #E1BEE7
   Sensors: Camera, Radar,
   Seismic, LiDAR
   Store-and-forward on signal loss.

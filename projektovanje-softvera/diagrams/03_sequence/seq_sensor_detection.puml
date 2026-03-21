@@ -1,15 +1,43 @@
 @startuml seq_sensor_detection
 title Sequence Diagram 1: Sensor Detection & Pre-Processing (Controller 1)
 
-participant "AcousticSensor" as ACOU
-participant "SeismicSensor" as SEIS
-participant "RadarSensor" as RAD
-participant "LiDARSensor" as LID
-participant "CameraSensor" as CAM
-participant "EdgeProcessor" as EDGE
-participant "SensorFusionEngine" as SFE
+skinparam backgroundColor #F0F4F8
+skinparam shadowing true
+skinparam defaultFontName Helvetica
+skinparam sequenceMessageAlign center
+skinparam responseMessageBelowArrow true
 
-note over ACOU, SFE
+skinparam sequence {
+  ArrowColor #1A5276
+  ArrowThickness 2
+  LifeLineBorderColor #1B5E20
+  LifeLineBackgroundColor #E8F5E9
+  ParticipantBorderColor #2E7D32
+  ParticipantBorderThickness 2
+  ParticipantFontStyle bold
+  DividerBackgroundColor #C8E6C9
+  DividerBorderColor #388E3C
+  GroupBorderColor #1B5E20
+  GroupBackgroundColor #E8F5E9
+  GroupFontColor #1B5E20
+  NoteBackgroundColor #FFFDE7
+  NoteBorderColor #F9A825
+  BoxBackgroundColor #E8F5E9
+  BoxBorderColor #2E7D32
+}
+
+box "Sensor Array — Controller 1" #E8F5E9
+  participant "AcousticSensor\n<<acoustic>>" as ACOU #A5D6A7
+  participant "SeismicSensor\n<<seismic>>" as SEIS #A5D6A7
+  participant "RadarSensor\n<<radar>>" as RAD  #A5D6A7
+  participant "LiDARSensor\n<<lidar>>" as LID  #A5D6A7
+  participant "CameraSensor\n<<camera>>" as CAM  #A5D6A7
+end box
+
+participant "EdgeProcessor\n<<onboard>>" as EDGE #FFF9C4
+participant "SensorFusionEngine\n<<Controller 2>>" as SFE #BBDEFB
+
+note over ACOU, SFE #D5E8D4
   Controller 1: Continuous zone monitoring.
   Sensors detect activity, edge processor
   pre-processes and forwards to Controller 2.
@@ -19,11 +47,11 @@ loop every 100ms
 
   ACOU -> EDGE : detectSound()
   SEIS -> EDGE : detectVibration()
-  RAD -> EDGE : detectTargets()
-  LID -> EDGE : generatePointCloud()
-  CAM -> EDGE : captureFrame()
+  RAD  -> EDGE : detectTargets()
+  LID  -> EDGE : generatePointCloud()
+  CAM  -> EDGE : captureFrame()
 
-  activate EDGE
+  activate EDGE #FFF176
   EDGE -> EDGE : filterNoise(allSensorData)
   EDGE -> EDGE : detectActivitySignature()
   EDGE -> EDGE : runObjectDetection(frame)
@@ -32,25 +60,34 @@ loop every 100ms
 
   alt Activity Detected
     EDGE -> SFE : transmitPreProcessedData(edgeResult)
+    activate SFE #90CAF9
+    SFE --> EDGE : ack
+    deactivate SFE
   else No significant activity
-    EDGE -> EDGE : continue monitoring
+    EDGE -> EDGE : continueMonitoring()
   end
 
   deactivate EDGE
 
 end
 
-note over EDGE
+note over EDGE #FFF9C4
   Edge pre-processing reduces
   bandwidth by ~80%.
-  Only significant activity data
-  is forwarded to Controller 2.
+  Only significant activity forwarded
+  to Controller 2.
 end note
 
-note over ACOU
-  Acoustic + Seismic sensors
-  provide early detection
+note over ACOU, SEIS #C8E6C9
+  Acoustic + Seismic:
+  earliest warning sensors
   before visual confirmation.
+end note
+
+note over RAD, LID #C8E6C9
+  Radar + LiDAR:
+  range, velocity, 3D mapping.
+  Camera: object classification.
 end note
 
 @enduml

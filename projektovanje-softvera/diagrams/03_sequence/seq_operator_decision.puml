@@ -1,96 +1,126 @@
 @startuml seq_operator_decision
 title Sequence Diagram 3: Operator Decision & Defence Action (Controller 3)
 
-actor "Operator" as OP
-participant "CommandCenter" as CC
-participant "AlarmSystem" as AS
-participant "DefenceController" as DC
-participant "UAV_UGV" as DEV
-participant "TrajectoryEstimator" as TE
-participant "AuditLog" as AUDIT
+skinparam backgroundColor #F0F4F8
+skinparam shadowing true
+skinparam defaultFontName Helvetica
+skinparam sequenceMessageAlign center
+skinparam responseMessageBelowArrow true
 
-note over OP, AUDIT
-  Controller 3: Operator reviews alarm,
-  approves or denies defence action.
-  Defence system wakes up and deploys.
+skinparam sequence {
+  ArrowColor #B71C1C
+  ArrowThickness 2
+  LifeLineBorderColor #C62828
+  LifeLineBackgroundColor #FFCDD2
+  ParticipantBorderColor #C62828
+  ParticipantBorderThickness 2
+  ParticipantFontStyle bold
+  ActorBorderColor #1B3A5C
+  ActorBackgroundColor #1B3A5C
+  ActorFontColor white
+  DividerBackgroundColor #FFCDD2
+  DividerBorderColor #B71C1C
+  GroupBorderColor #880E4F
+  GroupBackgroundColor #FCE4EC
+  GroupFontColor #880E4F
+  NoteBackgroundColor #FFFDE7
+  NoteBorderColor #F9A825
+  BoxBackgroundColor #FFEBEE
+  BoxBorderColor #C62828
+}
+
+actor "Operator" as OP
+participant "CommandCenter\n<<control>>" as CC #BBDEFB
+participant "AlarmSystem\n<<alarm>>" as AS #FFCDD2
+participant "DefenceController\n<<defence>>" as DC #EF9A9A
+participant "UAV / UGV\n<<device>>" as DEV #C8E6C9
+participant "TrajectoryEstimator\n<<Kalman>>" as TE #FFF9C4
+participant "AuditLog\n<<log>>" as AUDIT #ECEFF1
+
+note over OP, AUDIT #FFEBEE
+  Controller 3: Operator reviews alarm, approves or denies.
+  Two-step confirmation ensures human-in-the-loop control.
 end note
 
 == Operator Review ==
 OP -> CC : reviewAlarm(alarmId)
-activate CC
+activate CC #BBDEFB
 CC -> AS : getAlarmDetails(alarmId)
-activate AS
-AS --> CC : AlarmDetails
+activate AS #FFCDD2
+AS --> CC : AlarmDetails {target, trajectory, interceptPoint, confidence}
 deactivate AS
-CC --> OP : display alarm data on map
+CC --> OP : display alarm data + target trajectory on map
 deactivate CC
 
 == Operator Decision ==
 OP -> CC : decision(alarmId, APPROVE or DENY)
-activate CC
+activate CC #BBDEFB
 
 alt Action APPROVED
 
   == Defence System Wakeup ==
   CC -> DC : wakeup(alarmId, targetData)
-  activate DC
+  activate DC #EF9A9A
   DC -> DC : setStatus(GET_READY)
   DC -> DC : selectBestDevice(interceptPoint)
-  DC --> CC : DefenceAction
+  DC --> CC : DefenceAction {actionId, device, interceptPosition}
 
   == Deploy to Intercept Position ==
   DC -> DEV : deployToIntercept(interceptPosition)
-  activate DEV
+  activate DEV #C8E6C9
   DEV -> DEV : calculateRoute()
   DEV -> DEV : startMovement()
 
-  CC -> AUDIT : logEvent(DEFENCE_DEPLOYED)
+  CC -> AUDIT : logEvent(DEFENCE_DEPLOYED, actionId)
 
-  == Approach ==
   loop Target tracking update
-    DEV -> TE : requestUpdatedTrajectory()
-    activate TE
+    DEV -> TE : requestUpdatedTrajectory(trackId)
+    activate TE #FFF9C4
     TE --> DEV : updatedInterceptPoint
     deactivate TE
-    DEV -> DEV : adjustCourse()
+    DEV -> DEV : adjustCourse(updatedInterceptPoint)
   end
 
   DEV -> CC : targetInRange(actionId)
-  CC -> OP : requestFinalConfirmation()
+  CC -> OP : requestFinalConfirmation(actionId)
+  deactivate DEV
 
   == Final Operator Confirmation ==
   OP -> CC : confirmEngagement(actionId)
   CC -> DC : executeAction(actionId)
   DC -> DEV : executeDefenceAction()
+  activate DEV #EF9A9A
   DEV -> DEV : engageTarget()
-  DEV --> DC : ActionResult
+  DEV --> DC : ActionResult {result, hitOrMiss, timestamp}
   deactivate DEV
 
   DC --> CC : ActionFeedback
   deactivate DC
 
-  CC -> AUDIT : logEvent(ACTION_EXECUTED)
-  CC -> OP : displayResult(feedback)
+  CC -> AUDIT : logEvent(ACTION_EXECUTED, actionId, result)
+  CC -> OP : displayResult(actionFeedback)
 
 else Action DENIED
 
-  CC -> AS : resolveAlarm(alarmId, DENIED)
-  CC -> AUDIT : logEvent(ACTION_DENIED)
-  CC --> OP : alarm resolved
+  CC -> AS : resolveAlarm(alarmId, DENIED_BY_OPERATOR)
+  CC -> AUDIT : logEvent(ACTION_DENIED, alarmId, operatorId)
+  CC --> OP : alarm resolved — continue monitoring
 
 end
 
 deactivate CC
 
-note over DC
-  Defence system transitions:
-  STANDBY > GET_READY > DEPLOYED > ENGAGED
+note right of DC #EF9A9A
+  Defence transitions:
+  STANDBY > GET_READY
+  > DEPLOYED > ENGAGED
 end note
 
-note over OP
+note left of OP #FFFDE7
   Two-step confirmation:
   1. Approve defence action
-  2. Confirm engagement when in range
+  2. Confirm engagement
+     when target in range
 end note
 
 @enduml

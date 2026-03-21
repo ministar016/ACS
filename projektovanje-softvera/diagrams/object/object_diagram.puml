@@ -1,15 +1,30 @@
 @startuml object_diagram
 title Object Diagram — AMCS Runtime Instances\n(Active Mission MSN-2026-003, 2026-03-21 14:32 UTC)
 
+skinparam backgroundColor #F0F4F8
+skinparam shadowing true
+skinparam defaultFontName Helvetica
+skinparam defaultFontSize 10
+skinparam roundCorner 8
+
 skinparam object {
-  BackgroundColor LightYellow
-  BorderColor DarkOrange
+  BackgroundColor #EAF4FB
+  BorderColor #2471A3
+  BorderThickness 2
+  FontColor #1A2F45
+  ArrowColor #37474F
+  ArrowThickness 2
+}
+
+skinparam note {
+  BackgroundColor #FFFDE7
+  BorderColor #F9A825
 }
 
 ' ============================================================
 ' MISSION
 ' ============================================================
-object "mission_03 : MissionController" as MISS {
+object "mission_03 : MissionController" as MISS #BBDEFB {
   missionId = "MSN-2026-003"
   status = MissionStatus.ACTIVE
   startTime = "2026-03-21T14:00:00Z"
@@ -19,7 +34,7 @@ object "mission_03 : MissionController" as MISS {
 ' ============================================================
 ' OPERATOR
 ' ============================================================
-object "op_jovic : Operator" as OP {
+object "op_jovic : Operator" as OP #ECEFF1 {
   operatorId = "OP-0042"
   username = "jovic.m"
   clearanceLevel = 3
@@ -30,7 +45,7 @@ object "op_jovic : Operator" as OP {
 ' ============================================================
 ' DEVICES
 ' ============================================================
-object "uav_alpha : UAV" as UAV {
+object "uav_alpha : UAV" as UAV #C8E6C9 {
   deviceId = "UAV-ALPHA-001"
   type = DeviceType.UAV
   status = DeviceStatus.TRANSMITTING
@@ -41,7 +56,7 @@ object "uav_alpha : UAV" as UAV {
   heading = 270.0
 }
 
-object "ugv_bravo : UGV" as UGV {
+object "ugv_bravo : UGV" as UGV #A5D6A7 {
   deviceId = "UGV-BRAVO-002"
   type = DeviceType.UGV
   status = DeviceStatus.DEPLOYING
@@ -54,7 +69,7 @@ object "ugv_bravo : UGV" as UGV {
 ' ============================================================
 ' SENSORS (on uav_alpha)
 ' ============================================================
-object "cam_01 : CameraSensor" as CAM {
+object "cam_01 : CameraSensor" as CAM #FFF9C4 {
   sensorId = "CAM-UAV-ALPHA-01"
   resolution = Resolution.HD_1080P
   fps = 30
@@ -62,21 +77,21 @@ object "cam_01 : CameraSensor" as CAM {
   status = SensorStatus.ACTIVE
 }
 
-object "radar_01 : RadarSensor" as RAD {
+object "radar_01 : RadarSensor" as RAD #FFF9C4 {
   sensorId = "RAD-UAV-ALPHA-01"
   range = 5000.0
   frequency = 77.0
   status = SensorStatus.ACTIVE
 }
 
-object "lidar_01 : LiDARSensor" as LID {
+object "lidar_01 : LiDARSensor" as LID #FFF9C4 {
   sensorId = "LID-UAV-ALPHA-01"
   pointsPerSecond = 100000
   range = 200.0
   status = SensorStatus.ACTIVE
 }
 
-object "acoustic_01 : AcousticSensor" as ACOU {
+object "acoustic_01 : AcousticSensor" as ACOU #FFF9C4 {
   sensorId = "ACO-UAV-ALPHA-01"
   frequencyRange = "20Hz-20kHz"
   sensitivity = -42.0
@@ -86,7 +101,7 @@ object "acoustic_01 : AcousticSensor" as ACOU {
 ' ============================================================
 ' ALARM & DEFENCE
 ' ============================================================
-object "alarm_001 : Alarm" as ALARM {
+object "alarm_001 : Alarm" as ALARM #FFCDD2 {
   alarmId = "ALM-20260321-001"
   level = ThreatLevel.HIGH
   status = AlarmStatus.OPERATOR_APPROVED
@@ -95,7 +110,7 @@ object "alarm_001 : Alarm" as ALARM {
   targetLocation = GeoCoordinate(44.8115, 20.4605)
 }
 
-object "action_001 : DefenceAction" as ACTION {
+object "action_001 : DefenceAction" as ACTION #EF9A9A {
   actionId = "ACT-20260321-001"
   type = ActionType.INTERCEPT
   targetId = "TGT-001"
@@ -104,7 +119,7 @@ object "action_001 : DefenceAction" as ACTION {
   approvedBy = "OP-0042"
 }
 
-object "track_001 : Track" as TRACK {
+object "track_001 : Track" as TRACK #CE93D8 {
   trackId = "TRK-20260321-001"
   targetPosition = GeoCoordinate(44.8115, 20.4605)
   velocity = 15.0
@@ -112,8 +127,8 @@ object "track_001 : Track" as TRACK {
   confidence = 0.93
 }
 
-object "trajectory_001 : Trajectory" as TRAJ {
-  estimatedPath = "[44.8115→44.8100, 20.4605→20.4590]"
+object "trajectory_001 : Trajectory" as TRAJ #E1BEE7 {
+  estimatedPath = "[44.8115->44.8100, 20.4605->20.4590]"
   interceptPoint = GeoCoordinate(44.8110, 20.4600)
   estimatedETA = "2026-03-21T14:35:00Z"
 }
@@ -136,20 +151,20 @@ ACTION "targets" ..> TRACK
 TRACK "estimated by" ..> TRAJ
 UGV "deployed for" ..> ACTION
 
-note bottom of ALARM
+note bottom of ALARM #FFCDD2
   HIGH alarm at 14:32:00.
   Detected by acoustic + radar
   + camera fusion. Confidence: 93%.
   Operator approved defence action.
 end note
 
-note right of UGV
+note right of UGV #C8E6C9
   UGV deploying to intercept
   position at 25 km/h.
   Battery: 92.3%.
 end note
 
-note left of TRAJ
+note left of TRAJ #E1BEE7
   Kalman-predicted trajectory.
   ETA to intercept: ~3 min.
 end note

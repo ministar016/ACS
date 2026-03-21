@@ -1,134 +1,167 @@
 @startuml act_mission_workflow
-title Activity Diagram 1: Full Mission Workflow
+title Activity Diagram 1: Full Mission Workflow\n(Detection > Fusion > Decision > Action > Feedback)
 
-skinparam ActivityBackgroundColor LightBlue
-skinparam ActivityBorderColor DarkBlue
+skinparam backgroundColor #F0F4F8
+skinparam shadowing true
+skinparam defaultFontName Helvetica
+skinparam defaultFontSize 11
 
-|#E8FFE8|Controller 1: Sensor Detection|
-|#FFF8E7|Controller 2: Sensor Fusion|
-|#FFE4E4|Controller 3: Operator Decision|
-|#EAEAEA|Audit Log|
+skinparam activity {
+  BackgroundColor #EAF4FB
+  BorderColor #2471A3
+  BorderThickness 2
+  FontColor #1A2F45
+  DiamondBackgroundColor #FFF9C4
+  DiamondBorderColor #E65100
+  DiamondFontColor #BF360C
+  ArrowColor #1A5276
+  ArrowThickness 2
+  StartColor #1B3A5C
+  EndColor #B71C1C
+}
+
+skinparam swimlane {
+  BorderColor #555555
+  BorderThickness 2
+  TitleBackgroundColor #37474F
+  TitleFontColor #FFFFFF
+  TitleFontStyle bold
+}
+
+skinparam note {
+  BackgroundColor #FFFDE7
+  BorderColor #F9A825
+}
+
+|#D5E8D4|Controller 1: Sensor Detection|
+|#FFF2CC|Controller 2: Sensor Fusion|
+|#FFD7D7|Controller 3: Operator Decision|
+|#DAE8FC|Audit Log|
 
 |Controller 1: Sensor Detection|
 start
-:Sensors detect activity
+#C8E6C9:Sensors detect activity
 (Acoustic, Seismic, Radar, LiDAR, Camera);
-:Pre-process sensor data
+#C8E6C9:Pre-process sensor data
 (edge filtering, noise reduction);
 
 if (Activity signature detected?) then (yes)
-  :Flag activity and package
+  #A5D6A7:Flag activity and package
   pre-processed data;
-  :Monitor UGV/UAV heading
+  #A5D6A7:Monitor UGV/UAV heading
   in detection zone;
 
   |Controller 2: Sensor Fusion|
-  :Receive pre-processed data
+  #FFF9C4:Receive pre-processed data
   from Controller 1;
-  :Fuse multi-sensor data
-  (Kalman filter);
-  :Run AI/ML model
+  #FFF9C4:Fuse multi-sensor data
+  (Kalman filter, conflict resolution);
+  #FFE082:Run AI/ML model
   on fused data;
 
-  if (Target identified?) then (yes)
-    :Classify target type
+  if (Target identified?) then (yes [confidence > 0.85])
+    #FFCC80:Classify target type
     and threat level;
-    :Initialize target tracking;
-    :Estimate target trajectory
+    #FFCC80:Initialize target tracking;
+    #FFCC80:Estimate target trajectory
     (Kalman prediction);
-    :Calculate intercept point;
-    :Generate alarm
+    #FFCC80:Calculate intercept point;
+    #FF8A65:Generate alarm
     with target data + trajectory;
 
     |Controller 3: Operator Decision|
-    :Operator receives alarm
+    #FFCDD2:Operator receives alarm
     (target data, trajectory, map);
-    :Review threat information;
+    #FFCDD2:Review threat information;
 
     if (Operator approves action?) then (APPROVE)
-      :Defence system WAKEUP;
-      :Select best UGV/UAV
+      #EF9A9A:Defence system WAKEUP;
+      #EF9A9A:Select best UGV/UAV
       for intercept;
-      :Deploy device to
+      #EF9A9A:Deploy device to
       intercept position;
 
       |Audit Log|
-      :Record DEFENCE_DEPLOYED;
+      #BBDEFB:Record DEFENCE_DEPLOYED
+      {actionId, deviceId, timestamp};
 
       |Controller 3: Operator Decision|
-      :Device approaches target;
-      :Update trajectory in real-time;
+      #FFCDD2:Device approaches target;
+      #FFCDD2:Update trajectory in real-time;
 
       if (Target in range?) then (yes)
-        :Request final operator
+        #F48FB1:Request final operator
         confirmation;
 
         if (Operator confirms?) then (yes)
-          :Execute defence action;
-          :Receive action feedback;
+          #E91E63:Execute defence action;
+          #E91E63:Receive action feedback;
 
           if (Target hit?) then (HIT)
-            :Mission Accomplished;
+            #C8E6C9:Mission Accomplished;
 
             |Audit Log|
-            :Record MISSION_ACCOMPLISHED;
+            #C8E6C9:Record MISSION_ACCOMPLISHED
+            {actionId, targetId, timestamp};
 
             |Controller 3: Operator Decision|
-            :Stand down defence system;
+            #A5D6A7:Stand down defence system;
             :Return to monitoring;
             stop
 
           else (MISS)
-            :Recalculate trajectory
+            #FFE082:Recalculate trajectory
             with updated data;
-            :Calculate new intercept point;
-            :Propose new defence action;
-            :Request operator re-approval;
+            #FFE082:Calculate new intercept point;
+            #FFCC80:Propose new defence action;
+            #FFCC80:Request operator re-approval;
 
             |Audit Log|
-            :Record MISS_RECALCULATION;
+            #FFF9C4:Record MISS_RECALCULATION
+            {actionId, attempt, timestamp};
 
             |Controller 3: Operator Decision|
             stop
           endif
 
         else (ABORT)
-          :Recall device;
+          #E0E0E0:Recall device;
           :Return to monitoring;
 
           |Audit Log|
-          :Record ACTION_ABORTED;
+          #E0E0E0:Record ACTION_ABORTED;
 
           |Controller 3: Operator Decision|
           stop
         endif
 
-      else (no - out of range)
-        :Continue tracking and
-        repositioning;
+      else (no — out of range)
+        #E1BEE7:Continue tracking and
+        repositioning device;
         stop
       endif
 
     else (DENY)
-      :Log operator denial;
-      :Resolve alarm;
+      #E0E0E0:Log operator denial;
+      #E0E0E0:Resolve alarm;
       :Continue monitoring;
 
       |Audit Log|
-      :Record ACTION_DENIED;
+      #FFCDD2:Record ACTION_DENIED
+      {alarmId, operatorId, reason};
 
       |Controller 3: Operator Decision|
       stop
     endif
 
-  else (no - no target)
+  else (no — no target)
     |Controller 1: Sensor Detection|
-    :Continue monitoring loop;
+    #E0E0E0:Continue monitoring loop;
     stop
   endif
 
-else (no - no activity)
-  :Continue monitoring loop;
+else (no — no activity)
+  #E0E0E0:Continue monitoring loop;
   stop
 endif
 

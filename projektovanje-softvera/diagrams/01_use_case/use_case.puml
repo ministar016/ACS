@@ -1,37 +1,66 @@
 @startuml use_case
-title Autonomous Multi-Sensor Command System - Use Case Diagram
+title Autonomous Multi-Sensor Command System\nUse Case Diagram
 
 left to right direction
+skinparam backgroundColor #F0F4F8
+skinparam shadowing true
+skinparam defaultFontName Helvetica
+skinparam defaultFontSize 11
+skinparam roundCorner 12
 
 skinparam usecase {
-  BackgroundColor LightBlue
-  BorderColor DarkBlue
-  ArrowColor DarkBlue
+  BackgroundColor #EAF4FB
+  BorderColor #2471A3
+  BorderThickness 2
+  FontColor #1A2F45
+  ArrowColor #1A5276
+  ArrowThickness 2
+}
+
+skinparam actor {
+  BackgroundColor #1B3A5C
+  FontColor #FFFFFF
+  BorderColor #0D2137
+  BorderThickness 2
+  FontStyle bold
+  Style awesome
+}
+
+skinparam package {
+  BackgroundColor White
+  BorderThickness 2
+  FontStyle bold
+  FontSize 12
+}
+
+skinparam note {
+  BackgroundColor #FFFDE7
+  BorderColor #F9A825
 }
 
 actor Operator as OP
 
-rectangle "AMCS System" {
+rectangle "AMCS System" #F8FBFF {
 
-  package "Controller 1: Sensor Detection" #E8FFE8 {
-    usecase "UC01 Detect Activity" as UC01
-    usecase "UC02 Pre-Process\nSensor Data" as UC02
-    usecase "UC03 Monitor Zone\n(UGV/UAV Heading)" as UC03
+  package "Controller 1: Sensor Detection" #D5E8D4 {
+    usecase "UC01\nDetect Activity" as UC01 #C8E6C9
+    usecase "UC02\nPre-Process\nSensor Data" as UC02 #C8E6C9
+    usecase "UC03\nMonitor Zone\n(UGV/UAV Heading)" as UC03 #A5D6A7
   }
 
-  package "Controller 2: Sensor Fusion & Alarm" #FFF8E7 {
-    usecase "UC04 Fuse Sensor Data" as UC04
-    usecase "UC05 AI Target\nIdentification" as UC05
-    usecase "UC06 Estimate Target\nTrajectory" as UC06
-    usecase "UC07 Generate Alarm" as UC07
+  package "Controller 2: Sensor Fusion & Alarm" #FFF2CC {
+    usecase "UC04\nFuse Sensor Data" as UC04 #FFF9C4
+    usecase "UC05\nAI Target\nIdentification" as UC05 #FFE082
+    usecase "UC06\nEstimate Target\nTrajectory" as UC06 #FFCC80
+    usecase "UC07\nGenerate Alarm" as UC07 #FF8A65
   }
 
-  package "Controller 3: Operator Decision" #FFE4E4 {
-    usecase "UC08 Review Alarm\n& Target Data" as UC08
-    usecase "UC09 Approve / Deny\nAction" as UC09
-    usecase "UC10 Activate Defence\nSystem (Wakeup)" as UC10
-    usecase "UC11 Deploy UGV/UAV\nto Intercept" as UC11
-    usecase "UC12 Assess Feedback\n(Hit/Miss)" as UC12
+  package "Controller 3: Operator Decision" #FFD7D7 {
+    usecase "UC08\nReview Alarm\n& Target Data" as UC08 #FFCDD2
+    usecase "UC09\nApprove / Deny\nAction" as UC09 #EF9A9A
+    usecase "UC10\nActivate Defence\nSystem (Wakeup)" as UC10 #EF9A9A
+    usecase "UC11\nDeploy UGV/UAV\nto Intercept" as UC11 #E57373
+    usecase "UC12\nAssess Feedback\n(Hit / Miss)" as UC12 #FFCDD2
   }
 
 }
@@ -57,26 +86,28 @@ UC11 ..> UC12 : <<include>>
 
 UC12 ..> UC06 : <<extend>>
 
-note bottom of UC01
+note bottom of UC01 #D5E8D4
   Sensors: Acoustic, Seismic,
   Radar, LiDAR, Camera
   Continuous monitoring 24/7
 end note
 
-note right of UC05
-  AI/ML model classifies target
-  Confidence > 0.85 triggers alarm
+note right of UC05 #FFF9C4
+  AI/ML ONNX classifier
+  Confidence > 0.85
+  triggers alarm
 end note
 
-note bottom of UC10
-  Defence system wakeup:
-  Get ready mode, drive/fly
-  to intersection position
+note bottom of UC10 #FFCDD2
+  Defence wakeup:
+  GetReady > Deploy
+  to intercept position
 end note
 
-note right of UC12
-  Hit = Mission accomplished
-  Miss = Recalculate trajectory
+note right of UC12 #FFCDD2
+  HIT = Mission Accomplished
+  MISS = Recalculate trajectory
+  + operator re-approval
 end note
 
 @enduml

@@ -1,79 +1,122 @@
 @startuml sm_defence_system
 title State Machine Diagram 1: Defence System States
 
+skinparam backgroundColor #F0F4F8
+skinparam shadowing true
+skinparam defaultFontName Helvetica
+skinparam defaultFontSize 11
+
 skinparam state {
-  BackgroundColor LightYellow
-  BorderColor DarkOrange
-  ArrowColor DarkOrange
+  BackgroundColor #EAF4FB
+  BorderColor #2471A3
+  BorderThickness 2
+  FontColor #1A2F45
+  ArrowColor #1A5276
+  ArrowThickness 2
+  StartColor #1B3A5C
+  EndColor #B71C1C
 }
+
+skinparam note {
+  BackgroundColor #FFFDE7
+  BorderColor #F9A825
+}
+
+' Declare colors for non-composite states
+state Monitoring #D5E8D4
+state TargetConfirmed #FFF9C4
+state AlarmGenerated #FFE082
+state InRange #FF8A65
 
 [*] --> Monitoring : system start
 
+Monitoring : entry / startSensorLoop()
+Monitoring : do / pollSensors() every 100ms
 Monitoring --> ActivityDetected : sensor detects activity
 Monitoring --> Monitoring : no activity
 
-state ActivityDetected {
+state ActivityDetected #D5E8D4 {
   [*] --> PreProcessing
+  PreProcessing : do / filterNoise()
   PreProcessing --> Fusing : edge processor complete
+  Fusing : do / kalmanFilter() + mergeDetections()
   Fusing --> Identifying : fusion complete
+  Identifying : do / runMLInference()
   Identifying --> [*]
 }
 
 ActivityDetected --> TargetConfirmed : AI target identified\n(confidence > 0.85)
 ActivityDetected --> Monitoring : no target found
 
+TargetConfirmed : entry / classifyThreatLevel()
+TargetConfirmed : do / initTracking()
 TargetConfirmed --> AlarmGenerated : alarm created\noperator notified
 
+AlarmGenerated : entry / notifyOperator(alarm)
+AlarmGenerated : do / awaitOperatorDecision()
 AlarmGenerated --> DefenceReady : operator approves
 AlarmGenerated --> Monitoring : operator denies
 
-state DefenceReady {
+state DefenceReady #FFCC80 {
   [*] --> WakeUp
+  WakeUp : entry / setStatus(WAKEUP)
   WakeUp --> GetReady : select device
+  GetReady : entry / selectBestDevice()
+  GetReady : do / calculateRoute()
   GetReady --> Deploying : deploy to intercept
+  Deploying : do / moveToIntercept()
   Deploying --> [*]
 }
 
 DefenceReady --> InRange : device reaches target range
 
+InRange : entry / requestFinalConfirmation()
+InRange : do / trackTargetRealTime()
 InRange --> Engaged : operator confirms engagement
 InRange --> DefenceReady : target position changed
 InRange --> Monitoring : operator aborts
 
-state Engaged {
+state Engaged #EF9A9A {
   [*] --> ActionExecuting
+  ActionExecuting : do / executeDefenceAction()
   ActionExecuting --> EvaluatingResult : action complete
+  EvaluatingResult : do / evaluateHitOrMiss()
   EvaluatingResult --> [*]
 }
 
 Engaged --> MissionAccomplished : HIT confirmed
 Engaged --> Recalculating : MISS detected
 
-state MissionAccomplished {
+state MissionAccomplished #A5D6A7 {
   [*] --> StandingDown
+  StandingDown : do / recallDevice()
   StandingDown --> RecallDevice
   RecallDevice --> ArchiveData
+  ArchiveData : do / archiveAllMissionData()
   ArchiveData --> [*]
 }
 
 MissionAccomplished --> Monitoring : cleanup complete
 
-state Recalculating {
+state Recalculating #CE93D8 {
   [*] --> UpdatingTrack
+  UpdatingTrack : do / updateWithLatestSensorData()
   UpdatingTrack --> NewTrajectory : recalculate
+  NewTrajectory : do / adjustKalmanParameters()
   NewTrajectory --> NewInterceptPoint : predict intercept
+  NewInterceptPoint : do / recalculateInterceptPoint()
   NewInterceptPoint --> [*]
 }
 
 Recalculating --> AlarmGenerated : new action ready\noperator re-approval needed
 
-note right of DefenceReady
-  Defence system transitions:
+note right of DefenceReady #FFCC80
+  Defence transitions:
   WAKEUP > GET READY > DEPLOYING
   Device drives/flies to intercept
 end note
 
-note left of Recalculating
+note left of Recalculating #E1BEE7
   On MISS:
   - Update Kalman parameters
   - Recalculate trajectory
@@ -81,9 +124,10 @@ note left of Recalculating
   - Request operator re-approval
 end note
 
-note bottom of MissionAccomplished
+note bottom of MissionAccomplished #C8E6C9
   HIT confirmed by sensors.
   Archive all mission data.
+  Return to standby monitoring.
 end note
 
 @enduml

@@ -1,51 +1,74 @@
 @startuml class_diagram
 title Autonomous Multi-Sensor Command System\nClass Diagram
 
+skinparam backgroundColor #F0F4F8
+skinparam shadowing true
+skinparam defaultFontName Helvetica
+skinparam defaultFontSize 10
 skinparam classAttributeIconSize 0
+skinparam roundCorner 8
+
 skinparam class {
-  BackgroundColor LightYellow
-  BorderColor DarkOrange
-  ArrowColor DarkOrange
+  BackgroundColor #EAF4FB
+  BorderColor #2471A3
+  BorderThickness 2
+  HeaderBackgroundColor #2471A3
+  FontColor #1A2F45
+  AttributeFontColor #1A2F45
+  ArrowColor #1A5276
+  ArrowThickness 2
+  FontStyle bold
+}
+
+skinparam note {
+  BackgroundColor #FFFDE7
+  BorderColor #F9A825
+}
+
+skinparam package {
+  BorderThickness 2
+  FontStyle bold
+  FontSize 12
 }
 
 ' ============================================================
 ' PACKAGE: User Management
 ' ============================================================
-package "User Management" #EEEEEE {
+package "User Management" #ECEFF1 {
 
-  class Operator {
+  class Operator #ECEFF1 {
     - operatorId : String
     - username : String
     - assignedZone : String
     - clearanceLevel : Integer
     - lastLogin : DateTime
-    + login(credentials : Credentials) : AuthToken
+    + login(credentials) : AuthToken
     + logout() : void
     + monitorZone() : ZoneStatus
-    + reviewAlarm(alarm : Alarm) : AlarmDetails
-    + approveAction(action : DefenceAction) : Boolean
-    + denyAction(action : DefenceAction) : Boolean
-    + assessFeedback(feedback : ActionFeedback) : Decision
+    + reviewAlarm(alarm) : AlarmDetails
+    + approveAction(action) : Boolean
+    + denyAction(action) : Boolean
+    + assessFeedback(feedback) : Decision
   }
 }
 
 ' ============================================================
 ' PACKAGE: Command & Control
 ' ============================================================
-package "Command & Control" #E8F4FD {
+package "Command & Control" #BBDEFB {
 
-  class CommandCenter {
+  class CommandCenter #BBDEFB {
     - centerId : String
     - location : GeoCoordinate
     - activeOperators : List<Operator>
     - connectedDevices : List<Device>
-    + issueCommand(cmd : Command) : CommandStatus
-    + receiveData(data : SensorData) : void
-    + broadcastAlarm(alarm : Alarm) : void
+    + issueCommand(cmd) : CommandStatus
+    + receiveData(data) : void
+    + broadcastAlarm(alarm) : void
     + getSystemStatus() : SystemStatus
   }
 
-  class Command {
+  class Command #BBDEFB {
     - commandId : String
     - type : CommandType
     - payload : byte[]
@@ -57,7 +80,7 @@ package "Command & Control" #E8F4FD {
     + serialize() : byte[]
   }
 
-  class MissionController {
+  class MissionController #BBDEFB {
     - missionId : String
     - status : MissionStatus
     - assignedDevices : List<Device>
@@ -65,16 +88,16 @@ package "Command & Control" #E8F4FD {
     + startMission() : void
     + pauseMission() : void
     + abortMission() : void
-    + updateObjective(obj : Objective) : void
+    + updateObjective(obj) : void
   }
 }
 
 ' ============================================================
 ' PACKAGE: Autonomous Vehicles
 ' ============================================================
-package "Autonomous Vehicles" #F0FFF0 {
+package "Autonomous Vehicles" #C8E6C9 {
 
-  abstract class Device {
+  abstract class Device #C8E6C9 {
     - deviceId : String
     - type : DeviceType
     - status : DeviceStatus
@@ -83,35 +106,35 @@ package "Autonomous Vehicles" #F0FFF0 {
     + connect() : Boolean
     + disconnect() : void
     + sendTelemetry() : TelemetryData
-    + receiveCommand(cmd : EncryptedCommand) : void
+    + receiveCommand(cmd) : void
   }
 
-  class UAV {
+  class UAV #C8E6C9 {
     - altitude : Float
     - speed : Float
     - heading : Float
-    + takeOff(altitude : Float) : void
+    + takeOff(altitude) : void
     + land() : void
-    + setWaypoints(waypoints : List<GeoCoordinate>) : void
-    + flyToInterceptPosition(position : GeoCoordinate) : void
+    + setWaypoints(waypoints) : void
+    + flyToInterceptPosition(pos) : void
   }
 
-  class UGV {
+  class UGV #C8E6C9 {
     - terrainMode : TerrainMode
     - speed : Float
     - obstacleDetected : Boolean
-    + navigate(destination : GeoCoordinate) : void
+    + navigate(destination) : void
     + stop() : void
-    + driveToInterceptPosition(position : GeoCoordinate) : void
+    + driveToInterceptPosition(pos) : void
   }
 }
 
 ' ============================================================
 ' PACKAGE: Sensor Layer
 ' ============================================================
-package "Sensor Layer" #FFF8E7 {
+package "Sensor Layer" #FFF9C4 {
 
-  abstract class Sensor {
+  abstract class Sensor #FFF9C4 {
     - sensorId : String
     - type : SensorType
     - samplingRate : Float
@@ -121,36 +144,36 @@ package "Sensor Layer" #FFF8E7 {
     + calibrate() : void
   }
 
-  class AcousticSensor {
+  class AcousticSensor #FFF9C4 {
     - frequencyRange : FrequencyRange
     - sensitivity : Float
     + detectSound() : AcousticSignature
-    + classifySource(sig : AcousticSignature) : SourceType
+    + classifySource(sig) : SourceType
   }
 
-  class SeismicSensor {
+  class SeismicSensor #FFF9C4 {
     - sensitivity : Float
     - depthRange : Float
     + detectVibration() : SeismicData
-    + classifyMovement(data : SeismicData) : MovementType
+    + classifyMovement(data) : MovementType
   }
 
-  class RadarSensor {
+  class RadarSensor #FFF9C4 {
     - range : Float
     - frequency : Float
     + detectTargets() : List<RadarTarget>
-    + measureDistance(target : RadarTarget) : Float
-    + trackVelocity(target : RadarTarget) : Float
+    + measureDistance(target) : Float
+    + trackVelocity(target) : Float
   }
 
-  class LiDARSensor {
+  class LiDARSensor #FFF9C4 {
     - pointsPerSecond : Integer
     - range : Float
     + generatePointCloud() : PointCloud
     + map3DEnvironment() : Map3D
   }
 
-  class CameraSensor {
+  class CameraSensor #FFF9C4 {
     - resolution : Resolution
     - fps : Integer
     - nightVision : Boolean
@@ -159,80 +182,80 @@ package "Sensor Layer" #FFF8E7 {
     + detectObjects() : List<DetectedObject>
   }
 
-  class SensorFusionEngine {
+  class SensorFusionEngine #FFE082 {
     - sensors : List<Sensor>
     - fusionAlgorithm : FusionAlgorithm
-    + fuseData(dataSet : List<SensorData>) : FusedData
-    + detectAnomalies(data : FusedData) : List<Anomaly>
-    + applyKalmanFilter(data : SensorData) : SensorData
+    + fuseData(dataSet) : FusedData
+    + detectAnomalies(data) : List<Anomaly>
+    + applyKalmanFilter(data) : SensorData
   }
 }
 
 ' ============================================================
 ' PACKAGE: Threat Detection & Tracking
 ' ============================================================
-package "Threat Detection & Tracking" #F0E8FF {
+package "Threat Detection & Tracking" #E1BEE7 {
 
-  class ThreatDetectionModule {
+  class ThreatDetectionModule #E1BEE7 {
     - rules : List<DetectionRule>
     - mlModel : ThreatModel
-    + analyzeData(data : FusedData) : List<Threat>
-    + classifyThreat(threat : Threat) : ThreatLevel
-    + identifyTarget(data : FusedData) : TargetIdentification
+    + analyzeData(data) : List<Threat>
+    + classifyThreat(threat) : ThreatLevel
+    + identifyTarget(data) : TargetIdentification
   }
 
-  class TargetTracker {
+  class TargetTracker #E1BEE7 {
     - trackedTargets : Map<String, Target>
     - trackingAlgorithm : TrackingAlgorithm
-    + initTrack(target : DetectedObject) : Track
-    + updateTrack(trackId : String, data : SensorData) : void
-    + lostTrack(trackId : String) : void
-    + getPredictedPosition(trackId : String) : GeoCoordinate
+    + initTrack(target) : Track
+    + updateTrack(trackId, data) : void
+    + lostTrack(trackId) : void
+    + getPredictedPosition(trackId) : GeoCoordinate
   }
 
-  class TrajectoryEstimator {
+  class TrajectoryEstimator #CE93D8 {
     - kalmanFilter : KalmanFilter
-    + estimateTrajectory(track : Track) : Trajectory
-    + predictInterceptPoint(traj : Trajectory) : GeoCoordinate
-    + recalculateTrajectory(track : Track, feedback : ActionFeedback) : Trajectory
+    + estimateTrajectory(track) : Trajectory
+    + predictInterceptPoint(traj) : GeoCoordinate
+    + recalculateTrajectory(track, feedback) : Trajectory
   }
 }
 
 ' ============================================================
 ' PACKAGE: Defence System
 ' ============================================================
-package "Defence System" #FFE4E4 {
+package "Defence System" #FFCDD2 {
 
-  class DefenceController {
+  class DefenceController #FFCDD2 {
     - status : DefenceStatus
     - assignedDevices : List<Device>
     + wakeup() : void
-    + getReady(target : Target) : void
-    + deployToIntercept(device : Device, position : GeoCoordinate) : void
-    + executeAction(action : DefenceAction) : ActionResult
+    + getReady(target) : void
+    + deployToIntercept(device, position) : void
+    + executeAction(action) : ActionResult
     + standDown() : void
   }
 
-  class AlarmSystem {
+  class AlarmSystem #FFCDD2 {
     - activeAlarms : List<Alarm>
-    + createAlarm(threat : Threat, trajectory : Trajectory) : Alarm
-    + escalateAlarm(alarm : Alarm) : void
-    + resolveAlarm(alarmId : String) : void
-    + notifyOperator(alarm : Alarm) : void
+    + createAlarm(threat, trajectory) : Alarm
+    + escalateAlarm(alarm) : void
+    + resolveAlarm(alarmId) : void
+    + notifyOperator(alarm) : void
   }
 
-  class DefenceAction {
+  class DefenceAction #EF9A9A {
     - actionId : String
     - type : ActionType
     - targetId : String
     - interceptPosition : GeoCoordinate
     - status : ActionStatus
-    + approve(operatorId : String) : void
-    + deny(operatorId : String, reason : String) : void
+    + approve(operatorId) : void
+    + deny(operatorId, reason) : void
     + execute() : ActionResult
   }
 
-  class ActionFeedback {
+  class ActionFeedback #EF9A9A {
     - feedbackId : String
     - actionId : String
     - result : ActionResult
@@ -246,21 +269,21 @@ package "Defence System" #FFE4E4 {
 ' ============================================================
 ' PACKAGE: Infrastructure
 ' ============================================================
-package "Infrastructure" #EAEAEA {
+package "Infrastructure" #ECEFF1 {
 
-  class EncryptionService {
+  class EncryptionService #ECEFF1 {
     - algorithm : EncryptionAlgorithm
     - keySize : Integer
-    + encrypt(data : byte[]) : byte[]
-    + decrypt(data : byte[]) : byte[]
+    + encrypt(data) : byte[]
+    + decrypt(data) : byte[]
     + generateKey() : EncryptionKey
   }
 
-  class AuditLog {
+  class AuditLog #ECEFF1 {
     - logId : String
     - entries : List<LogEntry>
-    + logEvent(event : SystemEvent) : void
-    + query(filter : LogFilter) : List<LogEntry>
+    + logEvent(event) : void
+    + query(filter) : List<LogEntry>
   }
 }
 
