@@ -2,9 +2,16 @@
 FakeTarget — simulates a hostile drone flying through the corridor.
 
 Trajectory:
-  Start  : (42.848°N, 20.170°E)  heading 115° (ESE)  altitude 100 m  speed 120 km/h
-  Enters near NW corridor boundary.  First acoustic detection ~3 min in (crosses
-  within 1500 m of ACO-FIELD-01).  UAV radar locks at ~5–6 min.
+  Start  : (42.848°N, 20.170°E)  heading 100° (nearly due east)  altitude 100 m  speed 120 km/h
+
+  At heading 115° (previous) the drone exited the southern boundary in ~245 s while UAV
+  radar range was not entered until ~384 s — never detected, button always disabled.
+
+  At heading 100° the southward component drops to 5.8 m/s:
+    ~600 s corridor lifetime (vs 245 s)
+    ~5 min : UAV radar locks (856 m perpendicular pass, range 5 km)
+    ~7 min : ACO-FIELD-02 acoustic detects (855 m pass, range ~1200 m) → bearing line
+    → trackData populated → ACCEPT MISSION button activates
 
 The drone holds a roughly straight course with small random-walk noise;
 heading is more stable than a ground vehicle (no road constraint).
@@ -69,7 +76,9 @@ class FakeTarget:
     _START_LON  =  20.170          # ~8 km west of acoustic cluster
     _ALTITUDE_M =  100.0           # AGL cruise altitude
     _SPEED_MS   =  120.0 / 3.6    # 120 km/h → 33.3 m/s
-    _HEADING    =  115.0           # ESE — crosses sensor field heading toward corridor interior
+    _HEADING    =  100.0           # nearly due east — hugs northern corridor edge,
+                                   # passes within ~860 m of UAV orbit (z=5km radar)
+                                   # and ~855 m of ACO-FIELD-02 (well within 1200 m range)
 
     # Corridor bounds
     _LAT_MIN, _LAT_MAX = 42.817, 42.855
