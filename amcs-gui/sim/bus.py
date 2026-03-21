@@ -5,8 +5,16 @@ Architecture
 ────────────
 SimBus (QObject)
   ├── QTimer (10 Hz) → calls _tick()
-  ├── _tick() runs Scenario.step() in the Qt event loop
+  ├── _tick() runs Scenario.step() every physics tick
+  │     ├── accumulates velocity into a 3-sample rolling buffer
+  │     └── emits GUI signals every 5 ticks (≈ 2 Hz) to reduce churn
   └── emits typed pyqtSignals → QML binds via setContextProperty
+
+Velocity smoothing
+──────────────────
+heading_deg: circular mean over the last 3 track samples — avoids
+             the 0°/360° wraparound artefact of a plain arithmetic mean.
+speed_ms:    arithmetic mean over the same window.
 
 Each signal carries a Python dict of JSON-serialisable values that
 QML maps to its properties.  This keeps the QML layer loosely coupled
@@ -19,7 +27,8 @@ Usage
     bus.start()
 """
 from __future__ import annotations
-import json
+import math
+from collections import deque
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal, pyqtSlot, QVariant
 from .scenario import Scenario
 from .models   import ThreatLevel
@@ -48,12 +57,18 @@ class SimBus(QObject):
 
     # ── Construction ──────────────────────────────────────────────────────
 
-    def __init__(self, dt: float = 0.1, parent: QObject | None = None) -> None:
+    def __init__(self, dt: float = 0.1, emit_every: int = 5,
+                 parent: QObject | None = None) -> None:
         super().__init__(parent)
-        self._scenario = Scenario(dt=dt)
-        self._timer    = QTimer(self)
+        self._scenario  = Scenario(dt=dt)
+        self._timer     = QTimer(self)
         self._timer.setInterval(int(dt * 1000))  # ms
         self._timer.timeout.connect(self._tick)
+        # GUI throttle: emit signals every `emit_every` physics ticks
+        self._emit_every = emit_every
+        self._tick_n     = 0
+        # Rolling velocity buffer — smooths heading/speed over last 3 tracks
+        self._vel_buf: deque[tuple[float, float]] = deque(maxlen=3)
 
     # ── Public slots (callable from QML) ─────────────────────────────────
 
@@ -69,12 +84,42 @@ class SimBus(QObject):
     def reset(self) -> None:
         self._timer.stop()
         self._scenario = Scenario(dt=self._scenario._dt)
+        self._tick_n   = 0
+        self._vel_buf.clear()
         self._timer.start()
+
+    # ── Private helpers ───────────────────────────────────────────────────
+
+    def _smooth_velocity(self) -> tuple[float, float] | None:
+        """
+        Returns (speed_ms, heading_deg) averaged over the velocity buffer.
+        Heading uses circular mean to avoid 0°/360° wraparound artefacts.
+        Returns None if buffer is empty.
+        """
+        if not self._vel_buf:
+            return None
+        speeds   = [v[0] for v in self._vel_buf]
+        headings = [v[1] for v in self._vel_buf]
+        avg_speed = sum(speeds) / len(speeds)
+        sin_sum = sum(math.sin(math.radians(h)) for h in headings)
+        cos_sum = sum(math.cos(math.radians(h)) for h in headings)
+        avg_hdg = math.degrees(math.atan2(sin_sum, cos_sum)) % 360
+        return (avg_speed, avg_hdg)
 
     # ── Private tick ──────────────────────────────────────────────────────
 
     def _tick(self) -> None:
         snap = self._scenario.step()
+        self._tick_n += 1
+
+        # Update velocity buffer every physics step (before emit check)
+        if snap.tracks:
+            t = snap.tracks[0]
+            self._vel_buf.append((t.velocity.speed_ms, t.velocity.heading_deg))
+
+        # Throttle: emit GUI signals only every _emit_every ticks
+        if self._tick_n % self._emit_every != 0:
+            return
 
         # UAV
         uav = snap.uav_telemetry
@@ -151,14 +196,15 @@ class SimBus(QObject):
             for r in snap.seismic_readings
         ])
 
-        # Fused tracks
+        # Fused tracks — emit with smoothed velocity
+        smooth_vel = self._smooth_velocity()
         self.tracksUpdated.emit([
             {
                 "trackId":    t.track_id,
                 "lat":        round(t.position.lat, 6),
                 "lon":        round(t.position.lon, 6),
-                "speedMs":    round(t.velocity.speed_ms, 2),
-                "headingDeg": round(t.velocity.heading_deg, 1),
+                "speedMs":    round(smooth_vel[0], 2) if smooth_vel else round(t.velocity.speed_ms, 2),
+                "headingDeg": round(smooth_vel[1], 1) if smooth_vel else round(t.velocity.heading_deg, 1),
                 "confidence": t.confidence,
                 "threatLevel":t.threat_level.name,
                 "sources":    t.sensor_sources,
