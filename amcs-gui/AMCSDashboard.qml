@@ -255,21 +255,23 @@ ApplicationWindow {
                             model: ["SAT", "TOPO", "OSM"]
                             Rectangle {
                                 required property string modelData
+                                property string mapKey: modelData === "SAT" ? "satellite" : modelData.toLowerCase()
                                 width: 36; height: 18; radius: 3
-                                color: mapCanvas.mapType === modelData.toLowerCase() ? root.c_accent : "#1E3550"
-                                border.color: mapCanvas.mapType === modelData.toLowerCase() ? root.c_accent : "#2E4560"
+                                color: mapCanvas.mapType === mapKey ? root.c_accent : "#1E3550"
+                                border.color: mapCanvas.mapType === mapKey ? root.c_accent : "#2E4560"
                                 Text { anchors.centerIn: parent; text: modelData
                                        color: "#FFFFFF"; font { pixelSize: 9; bold: true } }
                                 TapHandler {
                                     onTapped: {
-                                        mapCanvas.mapType = modelData.toLowerCase()
+                                        mapCanvas.mapType = parent.mapKey
                                         mapCanvas.requestPaint()
                                     }
                                 }
                             }
                         }
 
-                        Text { text: "  " + root.mapCenterStr + "  z" + mapCanvas.tileZoom
+                        Text { text: "  " + mapCanvas.mapCenterLat.toFixed(4) + "°N  " +
+                                         mapCanvas.mapCenterLon.toFixed(4) + "°E  z" + mapCanvas.tileZoom
                                color: root.c_dim; font { pixelSize: 10; family: "monospace" } }
                     }
                 }
@@ -305,7 +307,74 @@ ApplicationWindow {
                         return (_latToTf(lat) - _latToTf(mapCenterLat)) * tileSize + height / 2
                     }
 
-                    // ── Text label with shadow ────────────────────────
+                    // ── Inverse projection (pixel → geo) ──────────────
+                    function xToLon(px) {
+                        var tf = (px - width / 2) / tileSize + _lonToTf(mapCenterLon)
+                        return tf / Math.pow(2, tileZoom) * 360 - 180
+                    }
+                    function yToLat(py) {
+                        var tf = (py - height / 2) / tileSize + _latToTf(mapCenterLat)
+                        return tileFloatToLat(tf)
+                    }
+                    function tileFloatToLat(tf) {
+                        var n = Math.PI * (1 - 2 * tf / Math.pow(2, tileZoom))
+                        return 180 / Math.PI * Math.atan(Math.sinh(n))
+                    }
+
+                    // ── Mouse wheel — zoom toward cursor ──────────────
+                    WheelHandler {
+                        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                        onWheel: function(event) {
+                            var steps   = event.angleDelta.y > 0 ? 1 : -1
+                            var newZoom = Math.max(8, Math.min(18, mapCanvas.tileZoom + steps))
+                            if (newZoom === mapCanvas.tileZoom) { event.accepted = true; return }
+
+                            // Geographic point under cursor (computed in OLD zoom)
+                            var px   = event.x
+                            var py   = event.y
+                            var lon0 = mapCanvas.xToLon(px)
+                            var lat0 = mapCanvas.yToLat(py)
+
+                            mapCanvas.tileZoom = newZoom   // switch zoom
+
+                            // Re-centre so (lon0, lat0) stays under cursor in new zoom
+                            var newTfX = mapCanvas._lonToTf(lon0) - (px - mapCanvas.width  / 2) / mapCanvas.tileSize
+                            var newTfY = mapCanvas._latToTf(lat0) - (py - mapCanvas.height / 2) / mapCanvas.tileSize
+                            mapCanvas.mapCenterLon = newTfX / Math.pow(2, newZoom) * 360 - 180
+                            mapCanvas.mapCenterLat = mapCanvas.tileFloatToLat(newTfY)
+
+                            mapCanvas.requestPaint()
+                            event.accepted = true
+                        }
+                    }
+
+                    // ── Drag handler — pan ────────────────────────────
+                    DragHandler {
+                        id: panHandler
+                        property real anchorLon: 0
+                        property real anchorLat: 0
+
+                        onActiveChanged: {
+                            if (active) {
+                                anchorLon = mapCanvas.xToLon(centroid.pressPosition.x)
+                                anchorLat = mapCanvas.yToLat(centroid.pressPosition.y)
+                            }
+                        }
+                        onCentroidChanged: {
+                            if (!active) return
+                            var cx = centroid.position.x
+                            var cy = centroid.position.y
+                            var z  = mapCanvas.tileZoom
+                            var ts = mapCanvas.tileSize
+
+                            var newTfX = mapCanvas._lonToTf(anchorLon) - (cx - mapCanvas.width  / 2) / ts
+                            var newTfY = mapCanvas._latToTf(anchorLat) - (cy - mapCanvas.height / 2) / ts
+                            mapCanvas.mapCenterLon = newTfX / Math.pow(2, z) * 360 - 180
+                            mapCanvas.mapCenterLat = mapCanvas.tileFloatToLat(newTfY)
+                            mapCanvas.requestPaint()
+                        }
+                        cursorShape: active ? Qt.ClosedHandCursor : Qt.OpenHandCursor
+                    }
                     function lbl(ctx, text, x, y, color) {
                         ctx.font = "bold 9px sans-serif"
                         ctx.fillStyle = "rgba(0,0,0,0.75)"
