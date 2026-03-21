@@ -496,20 +496,115 @@ ApplicationWindow {
                         lbl(ctx, label, x+10, y+4, detected ? "#FFD740" : "#FFE082")
                     }
 
-                    function drawFusedTrack(ctx, lat, lon, conf) {
-                        var x = lonToX(lon), y = latToY(lat)
-                        // Orange diamond for fused track estimate
-                        var r = 8
-                        ctx.save(); ctx.translate(x, y); ctx.rotate(Math.PI/4)
-                        ctx.fillStyle   = "rgba(255,152,0,0.7)"
-                        ctx.strokeStyle = "#FF9800"; ctx.lineWidth = 2
+                    // ── Geo move helper (WGS-84) ─────────────────────
+                    function _geoMove(lat, lon, headingDeg, distM) {
+                        var R   = 6371000
+                        var d   = distM / R
+                        var h   = headingDeg * Math.PI / 180
+                        var p1  = lat * Math.PI / 180
+                        var l1  = lon * Math.PI / 180
+                        var p2  = Math.asin(Math.sin(p1)*Math.cos(d) + Math.cos(p1)*Math.sin(d)*Math.cos(h))
+                        var l2  = l1 + Math.atan2(Math.sin(h)*Math.sin(d)*Math.cos(p1),
+                                                   Math.cos(d) - Math.sin(p1)*Math.sin(p2))
+                        return { lat: p2 * 180 / Math.PI, lon: l2 * 180 / Math.PI }
+                    }
+
+                    // ── Predicted route (replacing single-point diamond) ──
+                    function drawPredictedRoute(ctx, lat, lon, headingDeg, speedMs, conf) {
+                        var STEP_S  = 30     // sample every 30 s
+                        var TOTAL_S = 300    // 5 minutes ahead
+                        var CONE_ANG = 12    // ± degrees heading uncertainty
+
+                        // Build centre-line and two cone edges
+                        var centre = [], left = [], right = []
+                        var la = lat, lo = lon
+                        var laL = lat, loL = lon
+                        var laR = lat, loR = lon
+                        centre.push({lat: la, lon: lo, t: 0})
+                        left  .push({lat: la, lon: lo, t: 0})
+                        right .push({lat: la, lon: lo, t: 0})
+
+                        for (var t = STEP_S; t <= TOTAL_S; t += STEP_S) {
+                            var dist = speedMs * STEP_S
+                            var c = _geoMove(la, lo, headingDeg, dist)
+                            var l = _geoMove(laL, loL, headingDeg - CONE_ANG, dist * 1.02)
+                            var r = _geoMove(laR, loR, headingDeg + CONE_ANG, dist * 1.02)
+                            la = c.lat; lo = c.lon
+                            laL = l.lat; loL = l.lon
+                            laR = r.lat; loR = r.lon
+                            centre.push({lat: la, lon: lo, t: t})
+                            left  .push({lat: l.lat, lon: l.lon, t: t})
+                            right .push({lat: r.lat, lon: r.lon, t: t})
+                        }
+
+                        // ── Uncertainty cone fill ────────────────────
+                        ctx.beginPath()
+                        ctx.moveTo(lonToX(centre[0].lon), latToY(centre[0].lat))
+                        for (var i = 1; i < right.length; i++)
+                            ctx.lineTo(lonToX(right[i].lon), latToY(right[i].lat))
+                        for (var i = left.length - 1; i >= 0; i--)
+                            ctx.lineTo(lonToX(left[i].lon), latToY(left[i].lat))
+                        ctx.closePath()
+                        ctx.fillStyle = "rgba(255, 152, 0, 0.08)"
+                        ctx.fill()
+
+                        // ── Cone boundary lines ──────────────────────
+                        ctx.setLineDash([3, 5])
+                        ctx.strokeStyle = "rgba(255,152,0,0.30)"; ctx.lineWidth = 1
+                        ctx.beginPath()
+                        ctx.moveTo(lonToX(left[0].lon), latToY(left[0].lat))
+                        for (var i = 1; i < left.length; i++)
+                            ctx.lineTo(lonToX(left[i].lon), latToY(left[i].lat))
+                        ctx.stroke()
+                        ctx.beginPath()
+                        ctx.moveTo(lonToX(right[0].lon), latToY(right[0].lat))
+                        for (var i = 1; i < right.length; i++)
+                            ctx.lineTo(lonToX(right[i].lon), latToY(right[i].lat))
+                        ctx.stroke()
+
+                        // ── Centre predicted path ────────────────────
+                        ctx.setLineDash([6, 4])
+                        ctx.strokeStyle = "rgba(255,152,0,0.85)"; ctx.lineWidth = 2
+                        ctx.beginPath()
+                        ctx.moveTo(lonToX(centre[0].lon), latToY(centre[0].lat))
+                        for (var i = 1; i < centre.length; i++)
+                            ctx.lineTo(lonToX(centre[i].lon), latToY(centre[i].lat))
+                        ctx.stroke()
+                        ctx.setLineDash([])
+
+                        // ── Arrow at end of prediction ───────────────
+                        var n  = centre.length - 1
+                        var ax = lonToX(centre[n].lon),   ay = latToY(centre[n].lat)
+                        var bx = lonToX(centre[n-1].lon), by = latToY(centre[n-1].lat)
+                        var ang = Math.atan2(ay - by, ax - bx)
+                        ctx.fillStyle = "rgba(255,152,0,0.85)"
+                        ctx.beginPath()
+                        ctx.moveTo(ax, ay)
+                        ctx.lineTo(ax - 11*Math.cos(ang-0.38), ay - 11*Math.sin(ang-0.38))
+                        ctx.lineTo(ax - 11*Math.cos(ang+0.38), ay - 11*Math.sin(ang+0.38))
+                        ctx.closePath(); ctx.fill()
+
+                        // ── Time markers every 60 s ──────────────────
+                        for (var i = 1; i < centre.length; i++) {
+                            if (centre[i].t % 60 !== 0) continue
+                            var mx = lonToX(centre[i].lon), my = latToY(centre[i].lat)
+                            ctx.beginPath(); ctx.arc(mx, my, 4, 0, Math.PI*2)
+                            ctx.fillStyle = "#FF9800"; ctx.fill()
+                            lbl(ctx, "+" + (centre[i].t / 60) + " min", mx + 7, my - 5, "#FFCC80")
+                        }
+
+                        // ── Current estimated position (diamond) ─────
+                        var px = lonToX(lon), py = latToY(lat)
+                        var r  = 8
+                        ctx.save(); ctx.translate(px, py); ctx.rotate(Math.PI/4)
+                        ctx.fillStyle   = "rgba(255,152,0,0.85)"
+                        ctx.strokeStyle = "#FFCC00"; ctx.lineWidth = 2
                         ctx.beginPath(); ctx.rect(-r*0.7, -r*0.7, r*1.4, r*1.4)
                         ctx.fill(); ctx.stroke()
                         ctx.restore()
-                        // Confidence ring
-                        ctx.beginPath(); ctx.arc(x, y, 10 + conf * 6, 0, Math.PI*2)
-                        ctx.strokeStyle = "rgba(255,152,0,0.4)"; ctx.lineWidth = 1; ctx.stroke()
-                        lbl(ctx, "TRK " + (conf*100).toFixed(0) + "%", x+14, y-6, "#FF9800")
+                        ctx.beginPath(); ctx.arc(px, py, 12 + conf*5, 0, Math.PI*2)
+                        ctx.strokeStyle = "rgba(255,152,0,0.35)"; ctx.lineWidth = 1.5; ctx.stroke()
+                        lbl(ctx, "EST " + (conf*100).toFixed(0)+"%", px+14, py-6, "#FF9800")
                     }
 
                     function drawPVO(ctx, lat, lon, label, armed) {
@@ -686,10 +781,10 @@ ApplicationWindow {
                             drawTarget(ctx, tgtLat, tgtLon)
                         }
 
-                        // Fused track estimate (orange diamond)
+                        // Fused track: predicted route + uncertainty cone
                         if (root.trackData && root.trackData.length > 0) {
                             var trk = root.trackData[0]
-                            drawFusedTrack(ctx, trk.lat, trk.lon, trk.confidence)
+                            drawPredictedRoute(ctx, trk.lat, trk.lon, trk.headingDeg, trk.speedMs, trk.confidence)
                         }
 
                         drawLegend(ctx)
