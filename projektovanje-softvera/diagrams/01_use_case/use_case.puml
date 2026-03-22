@@ -1,7 +1,7 @@
 @startuml use_case
 title Autonomous Multi-Sensor Command System\nUse Case Diagram
 
-left to right direction
+top to bottom direction
 skinparam backgroundColor #F0F4F8
 skinparam shadowing true
 skinparam defaultFontName Helvetica
@@ -42,20 +42,20 @@ actor Operator as OP
 
 rectangle "AMCS System" #F8FBFF {
 
-  package "Controller 1: Sensor Detection" #D5E8D4 {
+  package "Controller 1: Sensor Detection" <<subsystem>> #D5E8D4 {
     usecase "UC01\nDetect Activity" as UC01 #C8E6C9
     usecase "UC02\nPre-Process\nSensor Data" as UC02 #C8E6C9
     usecase "UC03\nMonitor Zone\n(UGV/UAV Heading)" as UC03 #A5D6A7
   }
 
-  package "Controller 2: Sensor Fusion & Alarm" #FFF2CC {
+  package "Controller 2: Sensor Fusion & Alarm" <<subsystem>> #FFF2CC {
     usecase "UC04\nFuse Sensor Data" as UC04 #FFF9C4
     usecase "UC05\nAI Target\nIdentification" as UC05 #FFE082
     usecase "UC06\nEstimate Target\nTrajectory" as UC06 #FFCC80
     usecase "UC07\nGenerate Alarm" as UC07 #FF8A65
   }
 
-  package "Controller 3: Operator Decision" #FFD7D7 {
+  package "Controller 3: Operator Decision" <<subsystem>> #FFD7D7 {
     usecase "UC08\nReview Alarm\n& Target Data" as UC08 #FFCDD2
     usecase "UC09\nApprove / Deny\nAction" as UC09 #EF9A9A
     usecase "UC10\nActivate Defence\nSystem (Wakeup)" as UC10 #EF9A9A

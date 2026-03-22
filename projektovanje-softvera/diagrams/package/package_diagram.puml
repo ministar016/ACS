@@ -150,15 +150,15 @@ package "amcs" #F8FBFF {
 ' ============================================================
 ' DEPENDENCY RULES
 ' ============================================================
-"amcs.presentation" ..> "amcs.api" : <<uses>>
-"amcs.api" ..> "amcs.domain" : <<uses>>
-"amcs.api" ..> "amcs.defence" : <<uses>>
-"amcs.domain" ..> "amcs.processing" : <<uses>>
-"amcs.domain" ..> "amcs.infrastructure" : <<uses>>
-"amcs.processing" ..> "amcs.infrastructure" : <<uses>>
-"amcs.defence" ..> "amcs.processing" : <<uses>>
-"amcs.defence" ..> "amcs.domain" : <<uses>>
-"amcs.defence" ..> "amcs.infrastructure" : <<uses>>
+"amcs.presentation" ..> "amcs.api" : <<import>>
+"amcs.api" ..> "amcs.domain" : <<import>>
+"amcs.api" ..> "amcs.defence" : <<import>>
+"amcs.domain" ..> "amcs.processing" : <<import>>
+"amcs.domain" ..> "amcs.infrastructure" : <<access>>
+"amcs.processing" ..> "amcs.infrastructure" : <<access>>
+"amcs.defence" ..> "amcs.processing" : <<import>>
+"amcs.defence" ..> "amcs.domain" : <<import>>
+"amcs.defence" ..> "amcs.infrastructure" : <<access>>
 
 note bottom of "amcs.infrastructure" #ECEFF1
   Infrastructure provides:

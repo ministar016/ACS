@@ -345,40 +345,67 @@ WeaponSystem <|-- GroundSystem
 
 ' UAV (PVO) carries Radar + Camera; UGV carries Radar + Camera
 ' Acoustic/Seismic are standalone field units (mountedOn = null)
-UAV "1" o-- "1..*" RadarSensor : carries >
-UAV "1" o-- "1..*" CameraSensor : carries >
-UGV "1" o-- "1..*" RadarSensor : carries >
-UGV "1" o-- "1..*" CameraSensor : carries >
+UAV "1" *-- "1..*" RadarSensor : carries >
+UAV "1" *-- "1..*" CameraSensor : carries >
+UGV "1" *-- "1..*" RadarSensor : carries >
+UGV "1" *-- "1..*" CameraSensor : carries >
 
 ' Associations — Command & Control
 CommandCenter "1" --> "1..*" Operator : managed by >
 CommandCenter "1" --> "1..*" Device : monitors >
 CommandCenter "1" --> "1..*" WeaponSystem : controls >
-CommandCenter --> MissionController : delegates to >
-CommandCenter --> AlarmSystem : uses >
-CommandCenter --> AuditLog : logs via >
+CommandCenter "1" --> "1" MissionController : delegates to >
+CommandCenter "1" --> "1" AlarmSystem : uses >
+CommandCenter "1" --> "1" AuditLog : logs via >
 MissionController "1" --> "1..*" Command : issues >
 
 ' Associations — Sensor Processing Chain
 SensorFusionEngine "1" --> "1..*" Sensor : aggregates >
-SensorFusionEngine --> ThreatDetectionModule : feeds >
+SensorFusionEngine "1" --> "1" ThreatDetectionModule : feeds >
 
 ' Associations — Threat & Tracking
-ThreatDetectionModule --> TargetTracker : delegates tracking >
-ThreatDetectionModule --> AlarmSystem : triggers >
-TargetTracker --> TrajectoryEstimator : estimates trajectory >
+ThreatDetectionModule "1" --> "1" TargetTracker : delegates tracking >
+ThreatDetectionModule "1" --> "0..*" AlarmSystem : triggers >
+TargetTracker "1" --> "1" TrajectoryEstimator : estimates trajectory >
 
 ' Associations — Defence
-AlarmSystem --> DefenceController : activates >
-AlarmSystem --> Operator : notifies >
-DefenceController --> DefenceAction : creates >
+AlarmSystem "1" --> "1" DefenceController : activates >
+AlarmSystem "1" --> "1..*" Operator : notifies >
+DefenceController "1" --> "0..*" DefenceAction : creates >
 DefenceController "1" --> "1..*" Device : deploys >
 DefenceController "1" --> "1..*" WeaponSystem : fires >
-Operator --> DefenceAction : approves/denies >
-DefenceAction --> ActionFeedback : produces >
-ActionFeedback --> TrajectoryEstimator : triggers recalculation >
+Operator "1..*" --> "0..*" DefenceAction : approves/denies >
+DefenceAction "1" --> "1" ActionFeedback : produces >
+ActionFeedback "1" --> "1" TrajectoryEstimator : triggers recalculation >
 
 ' Infrastructure
 EncryptionService ..> Command : <<encrypts>>
+
+' ============================================================
+' TAGGED VALUES
+' ============================================================
+note bottom of ThreatDetectionModule #E1BEE7
+  {mlFramework = ONNX Runtime}
+  {confidenceThreshold = 0.85}
+  {targetClasses = UGV|UAV|Person|Vehicle}
+end note
+
+note bottom of TrajectoryEstimator #FFF9C4
+  {algorithm = Kalman Filter}
+  {predictionHorizon = 5s}
+  {updateRate = 10Hz}
+end note
+
+note bottom of SensorFusionEngine #FFF9C4
+  {samplingRate = 10Hz}
+  {protocol = gRPC / mTLS}
+  {bandwidthReduction = ~80%}
+end note
+
+note bottom of DefenceController #FFCDD2
+  {responseMode = human-in-the-loop}
+  {encryptedComms = AES-256-GCM}
+  {confirmationSteps = 2}
+end note
 
 @enduml
