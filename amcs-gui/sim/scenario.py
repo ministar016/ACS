@@ -32,8 +32,19 @@ Default threat picture:
              lost) air and ground attack together: UAVs strike the base,
              helicopters fire missiles from 1.5 km stand-off
 
-Air defence: PVO sites fire autonomously (one shot per minute each) at
-hostile drones in range.  UGVs carry 3 charges against enemy UGVs or UAVs.
+Phases (with a border, sim/territory.py): everything is calm while the
+enemy assembles outside Serbia — the air element, helicopters and single
+drones keep out of the territory.  The first enemy to cross the border /
+administrative line starts the war: every enemy then attacks the base or a
+friendly asset on its way there (UGV, PVO or GG site), which a drone that
+reaches it destroys.  Our side alerts at enemy activity within ~10 km and
+mans the interception lines (sim/engagement.py).
+
+Air defence: PVO sites are real systems (sim/systems.py) and fire
+autonomously at hostile drones inside their envelope; each shot is a munition
+in flight, resolved at impact against the target it was fired at.  GG sites
+(ALAS) do the same against hostile vehicles while weapons are free.  UGVs
+carry 3 charges against enemy UGVs or UAVs.
 
 Route provider
 ──────────────
@@ -52,8 +63,9 @@ from .models import (
     GeoCoord, Velocity, Track, ThreatLevel, ScenarioSnapshot,
     AcousticReading, SeismicReading,
 )
-from .target import (AerialTarget, AttackHelicopter, EscortDrone, GroundTarget, TargetState,
-                     _bearing_deg, _haversine_m, _move)
+from .target import (AerialTarget, AttackHelicopter, EscortDrone, GroundTarget, RaiderDrone,
+                     TargetState, _bearing_deg, _haversine_m, _move)
+from .territory import Territory
 from .devices.uav import UAV
 from .devices.ugv import UGV
 from .sensors.acoustic import AcousticSensor
@@ -67,12 +79,13 @@ from .tracker import (MultiTargetTracker, TrackStatus, BearingMeas, PositionMeas
                       radar_to_meas)
 from .threat import ThreatEvaluator
 from .engagement import EngagementManager, TrackView, PvoSite
+from . import systems
 
 
 _ACOUSTIC_SIGMA_RAD = math.radians(3.0)
 _UAV_CALLSIGNS = ("ALPHA", "DELTA", "ECHO", "FOXTROT", "GOLF", "HOTEL")
-_PVO_RESOLVE_M = 250.0          # PVO round resolves against a drone this close to the aim point
-_P_PVO_KILL    = 1.0            # "every minute one drone in range is destroyed"
+_PVO_RESOLVE_M = 250.0          # a munition is fired at the real target this close to the aim point
+_GUN_SPEED_MS  = 1_000.0        # 30/40 mm projectile, mean speed to the target
 _SITE_GROUND_RANGE_M = 12_000.0 # surveillance radar GMTI mode
 _P_MISSILE_HIT = 0.6            # attack-helicopter missile vs. the base
 _AXIS_SMOOTH   = 0.01           # per-tick EMA of the convoy's direction of advance (~10 s)
@@ -80,6 +93,12 @@ _AXIS_SMOOTH   = 0.01           # per-tick EMA of the convoy's direction of adva
 # an attack helicopter fires stand-off missiles, so it outranks a single drone.
 _CLASS_PRIORITY = {"ATTACK_HELICOPTER": 0.25}
 _SEISMIC_SIGMA_RAD = math.radians(8.0)
+_STRIKE_PATH_M     = 800.0      # an asset this close to an attacker's path to the base is struck instead
+_STRIKE_PER_ASSET  = 2          # attackers one asset draws at most
+_ASSET_KILL_M      = 200.0      # drone impact this close to the asset destroys it
+_BASE_HIT_M        = 300.0
+_ROUTE_RETRIES     = 2          # convoy: ask artemides again before driving the straight plan
+_ROUTE_RETRY_S     = 20.0
 _RENDEZVOUS_M      = 1_200.0    # air element "on station" within this of its slot
 _RENDEZVOUS_FRAC   = 0.8
 _BEARING_SHOW_S    = 1.6        # how long a bearing detection stays on the map
@@ -92,11 +111,19 @@ ONBOARD_PERIOD_S    = 0.5
 ACOUSTIC_PERIOD_S   = 1.0
 
 
-def build_targets(laydown: Laydown, dt: float, seed: int) -> list[AerialTarget]:
+def build_targets(laydown: Laydown, dt: float, seed: int, hold: bool = False) -> list[AerialTarget]:
+    """Single drones of the laydown.  hold: hostile ones wait for the war (RaiderDrone)."""
     base = (laydown.base.lat, laydown.base.lon)
     out = []
     for i, t in enumerate(laydown.threats):
         lat, lon = laydown.threat_start(t)
+        if hold and t.hostile:
+            out.append(RaiderDrone(
+                t.target_id, lat, lon, heading=t.heading, speed_ms=t.speed_kmh / 3.6,
+                altitude_m=t.altitude_m, dt=dt, seed=seed + i, spawn_time=t.spawn_time,
+                bounds=laydown.area_bounds, hostile=True, rcs_dbsm=t.rcs_dbsm,
+                drone_class=t.drone_class, strike_point=base))
+            continue
         out.append(AerialTarget(
             t.target_id, lat, lon, heading=t.heading, speed_ms=t.speed_kmh / 3.6,
             altitude_m=t.altitude_m, dt=dt, seed=seed + i, spawn_time=t.spawn_time,
@@ -182,7 +209,7 @@ class Scenario:
     def __init__(self, dt: float = 0.1, seed: int = 42, auto_roe: bool = False,
                  targets: list[AerialTarget] | None = None,
                  route_provider=None, laydown: Laydown = DEFAULT_LAYDOWN,
-                 drivability: DrivabilityGrid | None = None) -> None:
+                 drivability: DrivabilityGrid | None = None, border: bool = True) -> None:
         self._dt   = dt
         self._t    = 0.0
         self._rng  = random.Random(seed)
@@ -192,9 +219,17 @@ class Scenario:
 
         self.frame = LocalFrame(base.lat, base.lon)
         self.zone  = build_zone(laydown, self.frame)
+        # Border / administrative line: the war starts when an enemy crosses it
+        self.territory = Territory.load(self.frame) if (targets is None and border) else None
+        if self.territory is not None and not self.territory.contains(base.lat, base.lon):
+            self.territory = None                      # base outside the mapped territory: no border rules
+        self.war = self.territory is None              # no border → no calm phase
+        self.war_t: float | None = None
+        coordinated = (self.territory is not None and laydown.convoy is not None and
+                       laydown.convoy.vehicles + laydown.convoy.escort_drones + laydown.convoy.aviation > 0)
 
         # Ground truth
-        self.targets: list = targets if targets is not None else build_targets(laydown, dt, seed)
+        self.targets: list = targets if targets is not None else build_targets(laydown, dt, seed, hold=coordinated)
         self.convoy: list[GroundTarget] = []
         self.escorts: list[EscortDrone] = []           # UAVs + helicopters
         self.helicopters: list[AttackHelicopter] = []
@@ -220,9 +255,18 @@ class Scenario:
             for i, s in enumerate(laydown.seismic)
         ]
         self.radars: list[RadarSensor] = []
+        self.radar_periods: list[float] = []
         for i, s in enumerate(laydown.radars):
-            r = RadarSensor(s.site_id, range_m=RADAR_RANGE_M, seed=seed + 40 + i,
-                            ground_range_m=_SITE_GROUND_RANGE_M)
+            spec = systems.get(s.system)
+            if spec is not None and spec.radar_ref_m:
+                r = RadarSensor(s.site_id, range_m=spec.radar_ref_m, seed=seed + 40 + i,
+                                rcs_ref_dbsm=spec.radar_ref_dbsm, max_range_m=spec.detect_m,
+                                ground_range_m=spec.ground_range_m)
+                self.radar_periods.append(spec.revisit_s)
+            else:
+                r = RadarSensor(s.site_id, range_m=RADAR_RANGE_M, seed=seed + 40 + i,
+                                ground_range_m=_SITE_GROUND_RANGE_M)
+                self.radar_periods.append(SITE_RADAR_PERIOD_S)
             r.update_platform(s.lat, s.lon, 0.0, 10.0)
             self.radars.append(r)
 
@@ -244,15 +288,32 @@ class Scenario:
         self.threats  = ThreatEvaluator(self.zone)
         pvo = []
         for p in laydown.pvo:
-            pvo.append(PvoSite(p.site_id, p.lat, p.lon, p.range_m, p.ammo))
+            spec = systems.get(p.system)
+            pvo.append(PvoSite.from_spec(p.site_id, p.lat, p.lon, spec) if spec
+                       else PvoSite(p.site_id, p.lat, p.lon, p.range_m, p.ammo))
         self.engage   = EngagementManager(self.frame, self.zone, self.uavs, self.ugvs,
                                           auto_roe=auto_roe, ground_bbox=laydown.ground_bbox,
                                           drivability=drivability, pvo_sites=pvo)
+        self.engage.gg_sites = [PvoSite.from_spec(g.site_id, g.lat, g.lon, systems.get(g.system))
+                                for g in laydown.gg if systems.get(g.system)]
+        self.engage.territory = self.territory
+        if coordinated:
+            # The enemy's plan: stay outside until the attack starts (no border rule for lone incursions)
+            terr = self.territory
+            keep_out = lambda lat, lon: not self.war and terr.contains(lat, lon)   # noqa: E731
+            for t in self.targets:
+                if t.hostile and isinstance(t, AerialTarget):
+                    t.keep_out = keep_out
+                if isinstance(t, RaiderDrone):
+                    t._go_fn = lambda: self.war
+        self._munitions: list[tuple] = []            # (t_impact, site, track, target, weapon, lat, lon)
         self.route_provider = route_provider or StraightLineRouter()
         self._route_pending: dict[str, tuple] = {}
         self.last_threats: dict = {}
         self.convoy_route_source = "none"
         self._convoy_route_handle = None
+        self._convoy_route_tries = 0
+        self._convoy_retry_t: float | None = None
         if self.convoy:
             c = laydown.convoy
             self._convoy_plan = (laydown.at(*c.start_km),
@@ -285,6 +346,8 @@ class Scenario:
             return slat, slon, self._axis_deg, 0.0
 
         def release():
+            if self.territory is not None:
+                return self.war                      # everyone attacks once an enemy is inside the territory
             if not self.convoy:
                 return True                          # air element without vehicles: straight to the attack
             lead = self._convoy_lead()
@@ -389,14 +452,24 @@ class Scenario:
         return self.drivability.speed_ms_at(lat, lon)
 
     def _service_convoy_route(self) -> None:
+        if self._convoy_retry_t is not None and self._t >= self._convoy_retry_t:
+            self._convoy_retry_t = None
+            start, via, goal = self._convoy_plan
+            self._convoy_route_handle = self.route_provider.request("ENEMY-CONVOY", start, goal, via=via)
         h = self._convoy_route_handle
         if h is None or not h.done():
             return
         self._convoy_route_handle = None
         waypoints, source = h.result()
         start, via, goal = self._convoy_plan
+        if not waypoints and self._convoy_route_tries < _ROUTE_RETRIES:
+            # Trucks drive on artemides roads: ask again before giving up on the road network
+            self._convoy_route_tries += 1
+            self._convoy_retry_t = self._t + _ROUTE_RETRY_S
+            self.convoy_route_source = f"route retry {self._convoy_route_tries}/{_ROUTE_RETRIES} ({source})"
+            return
         if not waypoints:
-            # The enemy does not wait for our router: fall back to its plan
+            # The enemy does not wait for our router forever: fall back to its plan
             waypoints, source = via + [goal], f"straight-line fallback ({source})"
         self.convoy_route_source = source
         for v in self.convoy:
@@ -422,8 +495,10 @@ class Scenario:
         self._service_convoy_route()
         self._check_rendezvous()
         self._update_axis()
+        self._steer_strikes()
         for tgt in self.targets:
             tgt.step()
+        self._check_war(ts)
         self._helicopter_fire()
         alive = [t for t in self.targets if t.alive]
         fallback = self.targets[0] if self.targets else None
@@ -501,15 +576,21 @@ class Scenario:
             for tgt, hit in ugv.evaluate_charge(self.targets, ts):
                 self.engage.report_effect(ugv.DEVICE_ID, tgt.target_id if tgt else "—", hit,
                                           f"charge ({ugv.charges} left)")
-        for site, tid, lat, lon in self.engage.pvo_fire(views, threats):
-            cands = [t for t in self.targets if t.engageable and getattr(t, "domain", "AIR") == "AIR"]
+        for site, tid, lat, lon, weapon, rng in self.engage.pvo_fire(views, threats):
+            domain = site.domain
+            cands = [t for t in self.targets if t.engageable and getattr(t, "domain", "AIR") == domain]
             tgt = min(cands, key=lambda t: t.distance_to_m(lat, lon), default=None)
             if tgt is not None and tgt.distance_to_m(lat, lon) > _PVO_RESOLVE_M:
                 tgt = None
-            hit = tgt is not None and self._rng.random() < _P_PVO_KILL
-            if hit:
-                tgt.destroy()
-            self.engage.report_pvo(site, tid, tgt.target_id if tgt else None, hit, lat, lon)
+            spec = site.spec
+            if weapon == "GUN":
+                tof = rng / _GUN_SPEED_MS
+            elif spec is not None and spec.missile_speed_ms:
+                tof = spec.reaction_s + rng / spec.missile_speed_ms
+            else:
+                tof = 0.0
+            self._munitions.append((ts + tof, site, tid, tgt, weapon, lat, lon))
+        self._resolve_munitions(ts)
 
         tracks = self._build_tracks(ts, threats)
         threat = max((t.threat_level for t in tracks), default=ThreatLevel.NONE,
@@ -530,14 +611,122 @@ class Scenario:
             assaults            = self.assaults,
         )
 
+    def _resolve_munitions(self, ts: float) -> None:
+        """Munitions that arrive this tick hit the target they were fired at (pk)."""
+        due = [m for m in self._munitions if m[0] <= ts]
+        if not due:
+            return
+        self._munitions = [m for m in self._munitions if m[0] > ts]
+        for _, site, tid, tgt, weapon, lat, lon in due:
+            spec = site.spec
+            pk = 1.0 if spec is None else (spec.gun_pk if weapon == "GUN" else spec.pk)
+            hit = tgt is not None and tgt.engageable and self._rng.random() < pk
+            if hit:
+                tgt.destroy()
+                lat, lon = tgt.position.lat, tgt.position.lon
+            self.engage.report_pvo(site, tid, tgt.target_id if tgt else None, hit, lat, lon, weapon)
+
+    def munitions_view(self) -> list[dict]:
+        """Munitions in flight, for the map (launch site → aim point)."""
+        return [{"site": m[1].site_id, "lat": m[5], "lon": m[6], "weapon": m[4],
+                 "slat": m[1].lat, "slon": m[1].lon, "tImpact": round(m[0] - self._t, 1)}
+                for m in self._munitions]
+
+    # ── war: border crossing, strike targets, battle damage ───────────────
+
+    def _check_war(self, ts: float) -> None:
+        if self.war:
+            return
+        for t in self.targets:
+            if t.hostile and t.state in (TargetState.FLYING, TargetState.MOVING) and \
+                    self.territory.contains(t.position.lat, t.position.lon):
+                self.war, self.war_t = True, ts
+                self.engage._log("ALERT", f"WAR — {t.target_id} crossed into Serbian territory: "
+                                          f"all enemy forces attack")
+                self._assign_strikes()
+                return
+
+    def _assets(self) -> list[tuple[str, str, float, float]]:
+        """Friendly assets an attacker may strike on its way: (kind, id, lat, lon)."""
+        out = [("UGV", g.DEVICE_ID, g.position.lat, g.position.lon) for g in self.ugvs if not g.destroyed]
+        out += [("PVO", p.site_id, p.lat, p.lon) for p in self.engage.pvo_sites if not p.destroyed]
+        out += [("GG", p.site_id, p.lat, p.lon) for p in self.engage.gg_sites if not p.destroyed]
+        return out
+
+    def _assign_strikes(self) -> None:
+        """Each attack drone: the base, or the nearest friendly asset close to its path there."""
+        base = (self.laydown.base.lat, self.laydown.base.lon)
+        bx, by = self.frame.to_xy(*base)
+        load: dict[tuple[str, str], int] = {}
+        assets = self._assets()
+        attackers = [t for t in self.targets if isinstance(t, (EscortDrone, RaiderDrone))
+                     and not isinstance(t, AttackHelicopter) and t.alive]
+        for t in attackers:
+            tx, ty = self.frame.to_xy(t.position.lat, t.position.lon)
+            dx, dy = bx - tx, by - ty
+            L2 = max(dx * dx + dy * dy, 1.0)
+            best, best_d = None, math.inf
+            for kind, aid, lat, lon in assets:
+                if load.get((kind, aid), 0) >= _STRIKE_PER_ASSET:
+                    continue
+                ax, ay = self.frame.to_xy(lat, lon)
+                u = ((ax - tx) * dx + (ay - ty) * dy) / L2          # 0 = attacker, 1 = base
+                off = math.hypot(ax - (tx + u * dx), ay - (ty + u * dy))
+                d = math.hypot(ax - tx, ay - ty)
+                if 0.05 < u < 0.95 and off <= _STRIKE_PATH_M and d < best_d:
+                    best, best_d = (kind, aid, lat, lon), d
+            if best is None:
+                t.strike_point, t.strike_asset = base, None
+            else:
+                load[best[:2]] = load.get(best[:2], 0) + 1
+                t.strike_point, t.strike_asset = (best[2], best[3]), best[:2]
+        n = sum(1 for t in attackers if t.strike_asset)
+        if n:
+            self.engage._log("WARN", f"{n} attacker(s) diverted to friendly assets on their way to the base")
+
+    def _steer_strikes(self) -> None:
+        """Released attackers striking a UGV follow it (it may be driving)."""
+        if not self.war:
+            return
+        ugvs = {g.DEVICE_ID: g for g in self.ugvs}
+        for t in self.targets:
+            sa = getattr(t, "strike_asset", None)
+            if sa and sa[0] == "UGV" and t.alive and getattr(t, "released", False):
+                g = ugvs.get(sa[1])
+                if g is not None and not g.destroyed:
+                    t.aim_point = (g.position.lat, g.position.lon)
+
+    def _strike_effect(self, t) -> str:
+        """Battle damage of an attacker that reached its aim point."""
+        p = t.position
+        if t.strike_asset is None:
+            self.base_hits += 1
+            return f"BASE HIT — {t.target_id} ({t.drone_class}) struck {self.laydown.base.site_id}"
+        kind, aid = t.strike_asset
+        if kind == "UGV":
+            g = next((g for g in self.ugvs if g.DEVICE_ID == aid), None)
+            if g is not None and not g.destroyed and \
+                    _haversine_m(p.lat, p.lon, g.position.lat, g.position.lon) <= _ASSET_KILL_M:
+                g.destroy()
+                self.engage.own_losses += 1
+                return f"{aid} DESTROYED by {t.target_id} (kamikaze)"
+        else:
+            sites = self.engage.pvo_sites if kind == "PVO" else self.engage.gg_sites
+            s = next((s for s in sites if s.site_id == aid), None)
+            if s is not None and not s.destroyed and _haversine_m(p.lat, p.lon, s.lat, s.lon) <= _ASSET_KILL_M:
+                s.destroyed = True
+                s.ammo = s.reserve = s.gun_bursts = 0
+                self.engage.own_losses += 1
+                return f"{kind} {aid} DESTROYED by {t.target_id} (kamikaze)"
+        return f"{t.target_id} missed {aid}"
+
     def _score_outcomes(self) -> None:
         for t in self.targets:
             if t.target_id in self._outcomes_reported:
                 continue
             if t.state == TargetState.IMPACT:
                 self._outcomes_reported.add(t.target_id)
-                self.base_hits += 1
-                self.engage._log("ALERT", f"BASE HIT — {t.target_id} ({t.drone_class}) struck {self.laydown.base.site_id}")
+                self.engage._log("ALERT", self._strike_effect(t))
             elif t.state == TargetState.ARRIVED:
                 self._outcomes_reported.add(t.target_id)
                 self.assaults += 1
@@ -611,7 +800,7 @@ class Scenario:
 
         airborne_friendlies = [f for f, u in zip(self._friendly_uavs, self.uavs) if u.airborne]
         radars = [(r, r._plat_lat, r._plat_lon, 10.0, 0.0, alive + airborne_friendlies)
-                  for k, r in enumerate(self.radars) if self._due(ts, SITE_RADAR_PERIOD_S, k)]
+                  for k, r in enumerate(self.radars) if self._due(ts, self.radar_periods[k], k)]
         for k, uav in enumerate(self.uavs):
             if uav.sensing and self._due(ts, ONBOARD_PERIOD_S, k):
                 radars.append((uav.radar, uav.position.lat, uav.position.lon,

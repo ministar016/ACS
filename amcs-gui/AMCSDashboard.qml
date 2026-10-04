@@ -82,6 +82,21 @@ ApplicationWindow {
     property var  scenarioNames:   []
     property var  drivData:        null
     property var  pvoData:         null
+    property var  catalogData:     null       // systems catalog (sim/systems.py)
+    property var  perfData:        null       // sim process: effective speed, step time
+    property var  backendData:     null
+    property var  terrainData:     null       // 3D terrain (sim/terrain.py)
+    property var  borderData:      null       // Serbia border / administrative line (sim/territory.py)
+    property var  readinessData:   null       // phase CALM / ALERT / ATTACK, interception lines
+    property bool show3D:          false
+    property bool used3D:          false      // 3D scene stays loaded once opened
+    onShow3DChanged: if (show3D) used3D = true
+    property real driveOpacity:    0.35       // DRIVE layer opacity (2D and 3D)
+    // DRIVE grid upscaled with smooth interpolation (cells blend instead of blocks)
+    readonly property string drivSmoothUrl: drivData && drivData.ready && drivData.url
+                                            ? terrainProvider.smooth(drivData.url) : ""
+    property var  placeSystem:     ({ pvo: "STRELA_10M3", radar: "RPS42", gg: "ALAS" })
+    property alias map2d:          mapCanvas
     property var  statsData:       ({kills: 0, baseHits: 0, assaults: 0})
     property var  enemyRoute:      null
     property var  detectionsData:  []
@@ -129,6 +144,13 @@ ApplicationWindow {
                st === "ENGAGING" ? "#EF5350" : st === "NEUTRALIZED" ? "#66BB6A" :
                st === "DENIED" ? "#90A4AE" : "#B0BEC5"
     }
+    function siteStatus(p) {
+        if (p.destroyed) return "DESTROYED"
+        if (p.reloading) return "RELOADING"
+        if (p.ammo <= 0 && p.gunBursts <= 0) return p.reserve > 0 ? "RELOADING" : "EMPTY"
+        if (p.inFlight > 0) return "ENGAGING"
+        return p.readyIn > 0 ? "cycle " + p.readyIn.toFixed(0) + " s" : "READY"
+    }
     readonly property bool prereqTrack:    trackData.length > 0
     readonly property bool prereqHostile:  countIdentity("HOSTILE") > 0
     readonly property bool prereqPending:  pendingEng !== null
@@ -168,6 +190,15 @@ ApplicationWindow {
         function onEventsUpdated(data)   { root.eventsData = data }
         function onLinkUpdated(data)     { root.linkData = data }
         function onAutoRoeChanged(on)    { root.autoRoe = on }
+        function onCatalogUpdated(d)     { root.catalogData = d; root.placeSystem = d.defaults }
+        function onPerfUpdated(d)        { root.perfData = d }
+        function onBackendUpdated(d)     { root.backendData = d }
+        function onBorderUpdated(d)      { root.borderData = d; mapCanvas.requestPaint() }
+        function onReadinessUpdated(d)   { root.readinessData = d }
+    }
+    Connections {
+        target: terrainProvider
+        function onTerrainUpdated(d)     { root.terrainData = d }
     }
 
 
@@ -202,8 +233,14 @@ ApplicationWindow {
                     spacing: 24
                     TopChip { label: "MISSION";  value: "MSN-2026-003" }
                     TopChip { label: "ZONE";     value: "ZONE-BRAVO" }
-                    TopChip { label: "STATUS";   value: "● ACTIVE";
-                               valueColor: root.c_active }
+                    TopChip { label: "PHASE"
+                               value: !root.readinessData || !root.readinessData.border ? "● ACTIVE"
+                                      : root.readinessData.war ? "● WAR" + (root.readinessData.warT !== null && root.readinessData.warT !== undefined
+                                                                        ? "  T+" + root.readinessData.warT.toFixed(0) + " s" : "")
+                                      : root.readinessData.phase === "ALERT" ? "● ALERT — lines manned" : "● CALM"
+                               valueColor: !root.readinessData ? root.c_active
+                                           : root.readinessData.war ? root.c_armed
+                                           : root.readinessData.phase === "ALERT" ? root.c_deploy : root.c_active }
                     TopChip { label: "T+";
                                value: root.simTime.toFixed(1) + " s"
                                valueColor: root.c_warn }
@@ -233,6 +270,14 @@ ApplicationWindow {
                             }
                         }
                     }
+                    TopChip { label: "SIM";
+                               value: root.backendData && !root.backendData.alive ? "DOWN" :
+                                      root.perfData ? root.perfData.effective.toFixed(1) + "×  " +
+                                                      root.perfData.stepMs.toFixed(1) + " ms  1/" +
+                                                      root.perfData.displayEvery : "…"
+                               valueColor: root.backendData && !root.backendData.alive ? root.c_armed :
+                                           root.perfData && root.perfData.effective < root.timeScale * 0.8 ? root.c_deploy
+                                                                                                           : root.c_active }
                     TopChip { label: "THREAT";
                                value: ["NONE","LOW","MEDIUM","HIGH"][root.threatLevel] || "NONE"
                                valueColor: root.threatLevel >= 3 ? root.c_armed :
@@ -281,11 +326,12 @@ ApplicationWindow {
                         Repeater {
                             model: root.uavsData
                             DeviceCard {
+                                badge: "air_friend_uav"
                                 name: modelData.deviceId
                                 role: "INTERCEPTOR  |  " + modelData.mode
                                 accentColor: root.c_uav
-                                statusText: modelData.airborne ? "AIRBORNE" : "IDLE @ BASE"
-                                statusColor: modelData.mode === "INTERCEPT" ? root.c_armed
+                                statusText: modelData.expended ? "EXPENDED" : modelData.airborne ? "AIRBORNE" : "IDLE @ BASE"
+                                statusColor: modelData.expended ? root.c_standby : modelData.mode === "INTERCEPT" ? root.c_armed
                                            : modelData.airborne ? root.c_deploy : root.c_standby
                                 battery: modelData.batteryPct
                                 detail1: modelData.airborne ?
@@ -293,7 +339,8 @@ ApplicationWindow {
                                      (modelData.speedMs * 3.6).toFixed(0) + " km/h  |  Hdg " + modelData.headingDeg.toFixed(0) + "°")
                                     : "On the pad, charging"
                                 detail2: modelData.assignedTrack ? "▶ INTERCEPT " + modelData.assignedTrack
-                                         : modelData.mode === "PATROL" ? "Patrol over base (on call)" : ""
+                                         : modelData.mode === "PATROL" ? (modelData.station ? "Patrol orbit on the interception line"
+                                                                                            : "Patrol over base (on call)") : ""
                                 actionLabel: modelData.assignedTrack ? ""
                                              : modelData.mode === "IDLE" ? "▲ LAUNCH"
                                              : (modelData.mode === "PATROL" || modelData.mode === "LAUNCHING") ? "▼ RECALL" : ""
@@ -304,17 +351,19 @@ ApplicationWindow {
                         Repeater {
                             model: root.ugvsData
                             DeviceCard {
+                                badge: "gnd_friend_ugv"
                                 name: modelData.deviceId
                                 role: "JAMMER + CHARGES  |  " + (modelData.jamming ? "JAMMING " + modelData.assignedTrack
                                       : modelData.assignedTrack ? (modelData.weapon === "CHARGE" ? "FIRE → " : "→ ") + modelData.assignedTrack
                                       : "STANDBY")
                                 accentColor: root.c_ugv
-                                statusText: modelData.status
-                                statusColor: modelData.status === "DEPLOYED" ? root.c_active : root.c_deploy
+                                statusText: modelData.destroyed ? "DESTROYED" : modelData.status
+                                statusColor: modelData.destroyed ? root.c_armed
+                                             : modelData.status === "DEPLOYED" ? root.c_active : root.c_deploy
                                 battery: modelData.batteryPct
                                 detail1: "Spd: " + modelData.speedKmh.toFixed(0) + " km/h  |  " + modelData.terrain +
                                          "  |  charges " + modelData.charges + "/" + modelData.maxCharges
-                                detail2: "Route: " + modelData.routeSource
+                                detail2: (modelData.station ? "Line position  |  " : "") + "Route: " + modelData.routeSource
                             }
                         }
 
@@ -327,24 +376,28 @@ ApplicationWindow {
                         Repeater {
                             model: root.pvoData ? root.pvoData.sites : []
                             WeaponCard {
-                                sysId: modelData.id
-                                position: (modelData.ammo <= 0 ? "EMPTY" :
-                                           modelData.readyIn > 0 ? "reload " + modelData.readyIn.toFixed(0) + " s" : "READY") +
-                                          "  |  kills " + modelData.kills
-                                armed: root.pvoData.enabled && modelData.ammo > 0
-                                ammo: modelData.ammo
-                                range: (modelData.rangeM / 1000).toFixed(0) + " km"
+                                badge: modelData.gunRangeM > 0 ? "site_pvo_gun" : "site_pvo_sam"
+                                sysId: modelData.id + "  " + modelData.name
+                                position: root.siteStatus(modelData) + "  |  kills " + modelData.kills
+                                armed: !modelData.destroyed && root.pvoData.enabled && (modelData.ammo + modelData.reserve + modelData.gunBursts) > 0
+                                ammo: modelData.ammo + "+" + modelData.reserve +
+                                      (modelData.gunRangeM > 0 ? "  gun " + modelData.gunBursts : "")
+                                range: (modelData.minRangeM / 1000).toFixed(1) + "–" + (modelData.rangeM / 1000).toFixed(0) + " km"
                             }
                         }
 
-                        SectionHeader { title: "GROUND SYSTEMS  (GG x" + (root.laydownData ? root.laydownData.gg.length : 0) + ")" }
+                        SectionHeader { title: "GROUND SYSTEMS  (GG x" + (root.pvoData ? root.pvoData.gg.length : 0) + ")  —  " +
+                                               (root.pvoData && root.pvoData.ggEnabled ? "WEAPONS FREE" : "HOLD (AUTO-ROE off)") }
 
                         Repeater {
-                            model: root.laydownData ? root.laydownData.gg : []
+                            model: root.pvoData ? root.pvoData.gg : []
                             WeaponCard {
-                                sysId: modelData.id
-                                position: modelData.lat.toFixed(4) + "°N " + modelData.lon.toFixed(4) + "°E"
-                                armed: modelData.armed; ammo: 12; range: "3 km"
+                                badge: "site_ssm"
+                                sysId: modelData.id + "  " + modelData.name
+                                position: root.siteStatus(modelData) + "  |  kills " + modelData.kills
+                                armed: !modelData.destroyed && root.pvoData.ggEnabled && modelData.ammo > 0
+                                ammo: modelData.ammo
+                                range: (modelData.rangeM / 1000).toFixed(0) + " km"
                             }
                         }
 
@@ -361,10 +414,18 @@ ApplicationWindow {
                                      detail: "Ground vehicles 5–10 km, bearing"
                                      conf: root.seismicData.length > 0 ? Math.max.apply(null, root.seismicData.map(function(a) { return a.confidence })) : 0
                                      accentColor: root.c_warn }
-                        SensorCard { sensorType: "RADAR"
-                                     count: "x" + (root.laydownData ? root.laydownData.radars.length : 0)
-                                     detail: "Air 30 km / ground (GMTI) 12 km"
-                                     conf: 1.0; accentColor: "#80CBC4" }
+                        SectionHeader { title: "RADARS  (x" + (root.laydownData ? root.laydownData.radars.length : 0) + ")" }
+                        Repeater {
+                            model: root.laydownData ? root.laydownData.radars : []
+                            WeaponCard {
+                                badge: "site_radar"
+                                sysId: modelData.label + "  " + (modelData.systemName || "")
+                                position: modelData.lat.toFixed(4) + "°N " + modelData.lon.toFixed(4) + "°E"
+                                armed: true
+                                ammo: "—"
+                                range: (modelData.rangeM / 1000).toFixed(0) + " km vs −15 dBsm"
+                            }
+                        }
 
                         Item { height: 10 }
                     }
@@ -394,6 +455,22 @@ ApplicationWindow {
                             color: root.drivData && root.drivData.ready ? root.c_active : root.c_warn
                             font { pixelSize: 9; family: "monospace" }
                             Layout.maximumWidth: 360; elide: Text.ElideRight
+                        }
+                        Text { visible: root.showDrive; text: "α"; color: root.c_dim; font.pixelSize: 10 }
+                        Slider {
+                            visible: root.showDrive
+                            from: 0.1; to: 1.0; stepSize: 0.05
+                            value: root.driveOpacity
+                            implicitWidth: 80; implicitHeight: 18
+                            onMoved: { root.driveOpacity = value; mapCanvas.requestPaint() }
+                        }
+                        Rectangle {
+                            width: 36; height: 18; radius: 3
+                            color: root.show3D ? "#00838F" : "#1E3550"
+                            border.color: root.show3D ? "#4DD0E1" : "#2E4560"
+                            Text { anchors.centerIn: parent; text: "3D"
+                                   color: "#FFFFFF"; font { pixelSize: 9; bold: true } }
+                            TapHandler { onTapped: root.show3D = !root.show3D }
                         }
                         Rectangle {
                             width: 50; height: 18; radius: 3
@@ -484,6 +561,22 @@ ApplicationWindow {
                                     }
                                 }
                             }
+                            ComboBox {
+                                id: sysPick
+                                readonly property var items: root.catalogData && root.catalogData.byKind[root.editTool]
+                                                             ? root.catalogData.byKind[root.editTool] : []
+                                visible: items.length > 0
+                                Layout.preferredWidth: 230; implicitHeight: 22
+                                font.pixelSize: 10
+                                model: items.map(function(s) { return s.name + "  (" + (s.rangeM / 1000).toFixed(0) + " km)" })
+                                currentIndex: items.findIndex(function(s) { return s.code === root.placeSystem[root.editTool] })
+                                onActivated: function(i) {
+                                    var ps = Object.assign({}, root.placeSystem)
+                                    ps[root.editTool] = items[i].code
+                                    root.placeSystem = ps
+                                    simBus.setPlaceSystem(root.editTool, items[i].code)
+                                }
+                            }
                             Item { Layout.fillWidth: true }
                             ActionButton { width: 70; height: 22; label: "▶ RUN"; base: "#2E7D32"; edge: "#66BB6A"
                                            onClicked: simBus.setEditMode(false) }
@@ -556,6 +649,207 @@ ApplicationWindow {
                     }
                 }
 
+                // Base map tiles in their own canvas: repainted only on pan / zoom /
+                // map type, not on every simulation frame
+                Canvas {
+                    id: tileCanvas
+                    anchors { fill: parent; topMargin: 28 }
+                    onImageLoaded: requestPaint()
+                    onWidthChanged: requestPaint()
+                    onHeightChanged: requestPaint()
+                    onPaint: {
+                        var ctx = getContext("2d")
+                        ctx.fillStyle = "#1A2A3A"
+                        ctx.fillRect(0, 0, width, height)
+                        mapCanvas.drawTiles(ctx, tileCanvas)
+                    }
+                    Connections {
+                        target: tileCache
+                        function onTileReady(url) { tileCanvas.requestPaint() }
+                    }
+                    Connections {
+                        target: mapCanvas
+                        function onMapCenterLatChanged() { tileCanvas.requestPaint() }
+                        function onMapCenterLonChanged() { tileCanvas.requestPaint() }
+                        function onTileZoomChanged()     { tileCanvas.requestPaint() }
+                        function onMapTypeChanged()      { tileCanvas.requestPaint() }
+                    }
+                }
+
+                // 3D terrain view (Map3D.qml) — created on first use
+                Loader {
+                    id: map3d
+                    anchors { fill: parent; topMargin: 28 }
+                    z: 5
+                    active: root.show3D || root.used3D
+                    visible: root.show3D
+                    source: "Map3D.qml"
+                    onLoaded: item.dash = root
+                }
+
+                // ── NATO symbols (APP-6, symbols/*.svg) as sharp Image items ──
+                Item {
+                    id: symLayer
+                    anchors { fill: parent; topMargin: 28 }
+                    z: 1
+                    visible: !root.show3D
+                    clip: true
+                    readonly property var ld: root.laydownData
+                    readonly property var uavsUp: root.uavsData.filter(function(u) { return u.airborne })
+                    readonly property var truth: root.showTruth ? root.targetsData : []
+                    readonly property var pvoSites: root.pvoData ? root.pvoData.sites : []
+                    readonly property var ggSites: root.pvoData ? root.pvoData.gg : []
+
+                    Repeater {
+                        model: symLayer.ld ? symLayer.ld.acoustic.length : 0
+                        MapIcon {
+                            required property int index
+                            readonly property var d: symLayer.ld.acoustic[index] || ({})
+                            icon: root.acousticData.length > index && root.acousticData[index].detected ? "acoustic_suspect" : "acoustic_friend"
+                            lat: d.lat || 0; lon: d.lon || 0; size: 20
+                            tip: (d.label || "") + "  acoustic array"
+                        }
+                    }
+                    Repeater {
+                        model: symLayer.ld ? symLayer.ld.seismic.length : 0
+                        MapIcon {
+                            required property int index
+                            readonly property var d: symLayer.ld.seismic[index] || ({})
+                            icon: root.seismicData.length > index && root.seismicData[index].detected ? "seismic_suspect" : "seismic_friend"
+                            lat: d.lat || 0; lon: d.lon || 0; size: 20
+                            tip: (d.label || "") + "  seismic array"
+                        }
+                    }
+                    Repeater {
+                        model: symLayer.ld ? symLayer.ld.radars.length : 0
+                        MapIcon {
+                            required property int index
+                            readonly property var d: symLayer.ld.radars[index] || ({})
+                            icon: "radar_friend"; lat: d.lat || 0; lon: d.lon || 0; size: 26
+                            tip: (d.label || "") + "  " + (d.systemName || "") + "  " + ((d.rangeM || 0) / 1000).toFixed(0) + " km"
+                        }
+                    }
+                    Repeater {
+                        model: symLayer.pvoSites.length
+                        MapIcon {
+                            required property int index
+                            readonly property var d: symLayer.pvoSites[index] || ({})
+                            icon: (d.gunRangeM > 0 ? "spaag" : "sam") + (d.destroyed ? "_dead" : "_friend")
+                            lat: d.lat || 0; lon: d.lon || 0; size: 28
+                            tip: (d.id || "") + "  " + (d.name || "") + "  ammo " + d.ammo + "+" + d.reserve +
+                                 (d.gunRangeM > 0 ? "  gun " + d.gunBursts : "") + "  " + root.siteStatus(d)
+                            opacity: root.pvoData && root.pvoData.enabled && (d.ammo + d.reserve + d.gunBursts) > 0 ? 1.0 : 0.45
+                        }
+                    }
+                    Repeater {
+                        model: symLayer.ggSites.length
+                        MapIcon {
+                            required property int index
+                            readonly property var d: symLayer.ggSites[index] || ({})
+                            icon: d.destroyed ? "ssm_dead" : "ssm_friend"; lat: d.lat || 0; lon: d.lon || 0; size: 28
+                            tip: (d.id || "") + "  " + (d.name || "") + "  ammo " + d.ammo
+                            opacity: root.pvoData && root.pvoData.ggEnabled && d.ammo > 0 ? 1.0 : 0.45
+                        }
+                    }
+                    Repeater {
+                        model: root.ugvsData.length
+                        MapIcon {
+                            required property int index
+                            readonly property var d: root.ugvsData[index] || ({})
+                            icon: d.destroyed ? "ugv_dead" : "ugv_friend"; lat: d.lat || 0; lon: d.lon || 0; size: 28
+                            heading: d.headingDeg || 0
+                            tip: (d.deviceId || "") + "  " + (d.status || "") + "  " + (d.speedKmh || 0) + " km/h  charges " + d.charges
+                        }
+                    }
+                    Repeater {
+                        model: symLayer.uavsUp.length
+                        MapIcon {
+                            required property int index
+                            readonly property var d: symLayer.uavsUp[index] || ({})
+                            icon: "quad_friend"; lat: d.lat || 0; lon: d.lon || 0; size: 26
+                            heading: d.headingDeg || 0
+                            tip: (d.deviceId || "") + "  " + (d.mode || "") + "  " + Math.round(d.altitudeM || 0) + " m"
+                        }
+                    }
+                    Repeater {
+                        model: symLayer.truth.length
+                        MapIcon {
+                            required property int index
+                            readonly property var d: symLayer.truth[index] || ({})
+                            readonly property bool dead: d.state === "DESTROYED" || d.state === "LANDED" || d.state === "DISABLED"
+                            visible: d.state !== "PENDING"
+                            icon: mapCanvas.iconShape(d.domain, d.cls) + (dead ? "_dead" : d.hostile ? "_hostile" : "_neutral")
+                            lat: d.lat || 0; lon: d.lon || 0; size: 16
+                            tip: "TRUTH " + (d.id || "") + "  " + (d.state || "")
+                            opacity: dead ? 0.25 : 0.55
+                        }
+                    }
+                    Repeater {
+                        model: root.trackData.length
+                        MapIcon {
+                            required property int index
+                            readonly property var d: root.trackData[index] || ({})
+                            icon: d.trackId ? mapCanvas.trackIcon(d) : ""
+                            lat: d.lat || 0; lon: d.lon || 0; size: d.domain === "GROUND" ? 26 : 28
+                            heading: d.headingDeg || 0
+                            tip: (d.trackId || "") + "  " + (d.identity || "") + "  " + Math.round((d.speedMs || 0) * 3.6) + " km/h" +
+                                 (d.domain === "GROUND" ? "  vehicle" : "  " + Math.round(d.altitudeM || 0) + " m") +
+                                 (d.objClass && d.objClass !== "UNKNOWN" ? "  " + d.objClass : "") +
+                                 (d.engState ? "  " + d.engState : "")
+                            opacity: d.engState === "NEUTRALIZED" ? 0.5 : (d.status === "COASTING" ? 0.65 : 1.0)
+                        }
+                    }
+
+                    // Legend (APP-6) — top right
+                    Rectangle {
+                        anchors { right: parent.right; top: parent.top; margins: 10 }
+                        width: legendCol.implicitWidth + 20; height: legendCol.implicitHeight + 16
+                        radius: 4
+                        color: "#D90D1B2A"; border.color: root.c_border
+                        Column {
+                            id: legendCol
+                            anchors { left: parent.left; top: parent.top; margins: 8; leftMargin: 10 }
+                            spacing: 3
+                            Text { text: "LEGEND"; color: root.c_dim; font { pixelSize: 9; bold: true } }
+                            Repeater {
+                                model: [
+                                    ["quad_friend",    "Own interceptor UAV"],
+                                    ["ugv_friend",     "Own UGV (jammer)"],
+                                    ["quad_hostile",   "Hostile UAV"],
+                                    ["wing_hostile",   "Hostile fixed-wing UAV"],
+                                    ["helo_hostile",   "Hostile attack helo"],
+                                    ["truck_hostile",  "Hostile vehicle"],
+                                    ["quad_suspect",   "Suspect track"],
+                                    ["quad_neutral",   "Neutral track"],
+                                    ["quad_unknown",   "Unknown track"],
+                                    ["sam_friend",     "PVO missile"],
+                                    ["spaag_friend",   "PVO gun-missile"],
+                                    ["ssm_friend",     "GG (ALAS)"],
+                                    ["radar_friend",   "Radar"],
+                                    ["acoustic_friend", "Acoustic array"],
+                                    ["seismic_friend", "Seismic array"],
+                                    ["sam_dead",       "Destroyed"]
+                                ]
+                                Row {
+                                    required property var modelData
+                                    spacing: 6
+                                    Item {
+                                        width: 22; height: 20
+                                        Image {
+                                            anchors.centerIn: parent
+                                            source: symbolsInfo.icons + modelData[0] + ".svg"
+                                            sourceSize: Qt.size(20, 20)
+                                            smooth: true
+                                        }
+                                    }
+                                    Text { text: modelData[1]; color: "#C8D8E4"; font.pixelSize: 10
+                                           anchors.verticalCenter: parent.verticalCenter }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 Canvas {
                     objectName: "mapCanvas"
                     id: mapCanvas
@@ -603,7 +897,10 @@ ApplicationWindow {
                     }
 
                     // ── Mouse wheel — zoom toward cursor ──────────────
+                    // 2D input is off while the 3D view covers the map — otherwise these
+                    // handlers (underneath) steal the 3D view's drags
                     WheelHandler {
+                        enabled: !root.show3D
                         acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
                         onWheel: function(event) {
                             var steps   = event.angleDelta.y > 0 ? 1 : -1
@@ -631,7 +928,7 @@ ApplicationWindow {
 
                     // ── Editor: click places the selected item ───────
                     TapHandler {
-                        enabled: root.editMode
+                        enabled: root.editMode && !root.show3D
                         onTapped: function(eventPoint, button) {
                             simBus.editPlace(root.editTool,
                                              mapCanvas.yToLat(eventPoint.position.y),
@@ -642,6 +939,7 @@ ApplicationWindow {
                     // ── Drag handler — pan ────────────────────────────
                     DragHandler {
                         id: panHandler
+                        enabled: !root.show3D
                         property real anchorLon: 0
                         property real anchorLat: 0
 
@@ -675,17 +973,14 @@ ApplicationWindow {
                     }
 
                     // ── Tile URL ──────────────────────────────────────
+                    // Tiles come from the Python tile cache (sim/tiles.py): a local file URL, or ""
+                    // while it downloads — tileCache.tileReady repaints when it arrives
                     function tileUrl(tx, ty, z) {
-                        if (mapType === "satellite")
-                            return "https://server.arcgisonline.com/ArcGIS/rest/services/" +
-                                   "World_Imagery/MapServer/tile/" + z + "/" + ty + "/" + tx
-                        if (mapType === "topo")
-                            return "https://tile.opentopomap.org/" + z + "/" + tx + "/" + ty + ".png"
-                        return "https://tile.openstreetmap.org/" + z + "/" + tx + "/" + ty + ".png"
+                        return tileCache.url(mapType, z, tx, ty)
                     }
 
                     // ── Draw map tiles ────────────────────────────────
-                    function drawTiles(ctx) {
+                    function drawTiles(ctx, cv) {
                         var cTX  = _lonToTf(mapCenterLon)
                         var cTY  = _latToTf(mapCenterLat)
                         var nX   = Math.ceil(width  / (2 * tileSize)) + 1
@@ -698,63 +993,46 @@ ApplicationWindow {
                                 var url = tileUrl(tx, ty, tileZoom)
                                 var px  = (tx - cTX) * tileSize + width  / 2
                                 var py  = (ty - cTY) * tileSize + height / 2
-                                if (isImageLoaded(url))
+                                if (url === "") continue
+                                if (cv.isImageLoaded(url))
                                     ctx.drawImage(url, px, py, tileSize, tileSize)
                                 else
-                                    loadImage(url)
+                                    cv.loadImage(url)
                             }
                         }
                     }
 
-                    function drawUAV(ctx, lat, lon, label) {
-                        var x = lonToX(lon), y = latToY(lat), r = 9
-                        ctx.lineWidth = 2
-                        ctx.strokeStyle = "#81C784"
-                        ctx.beginPath(); ctx.moveTo(x-r, y-r); ctx.lineTo(x+r, y+r); ctx.stroke()
-                        ctx.beginPath(); ctx.moveTo(x+r, y-r); ctx.lineTo(x-r, y+r); ctx.stroke()
-                        var pp = [[x-r,y-r],[x+r,y-r],[x-r,y+r],[x+r,y+r]]
-                        for (var i = 0; i < pp.length; i++) {
-                            ctx.beginPath(); ctx.arc(pp[i][0], pp[i][1], 4, 0, Math.PI*2)
-                            ctx.fillStyle = "#C8E6C9"
-                            ctx.strokeStyle = "#4CAF50"; ctx.lineWidth = 1.5
-                            ctx.fill(); ctx.stroke()
-                        }
-                        ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI*2)
-                        ctx.fillStyle = "#FFFFFF"; ctx.fill()
-                        lbl(ctx, label, x+14, y+4, "#C8E6C9")
+                    // NATO symbols are QML Image items (symLayer below), not canvas
+                    // bitmaps: an SVG rendered at its on-screen size stays sharp
+                    // Plain map icon (icons/<shape>_<colour>.svg) for a track / truth object
+                    function iconColour(identity) {
+                        return identity === "HOSTILE" ? "hostile" : identity === "SUSPECT" ? "suspect"
+                             : identity === "NEUTRAL" ? "neutral" : "unknown"
                     }
-
-                    function drawUGV(ctx, lat, lon, label) {
-                        var x = lonToX(lon), y = latToY(lat)
-                        var w = 20, h = 14
-                        ctx.fillStyle = "#A5D6A7"
-                        ctx.strokeStyle = "#388E3C"; ctx.lineWidth = 2
-                        ctx.beginPath(); ctx.rect(x-w/2, y-h/2, w, h); ctx.fill(); ctx.stroke()
-                        ctx.fillStyle = "#2E7D32"
-                        ctx.fillRect(x-w/2-4, y-h/2+2, 5, h-4)
-                        ctx.fillRect(x+w/2-1, y-h/2+2, 5, h-4)
-                        ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI*2)
-                        ctx.fillStyle = "#FFFFFF"; ctx.fill()
-                        lbl(ctx, label, x+16, y+4, "#A5D6A7")
+                    function iconShape(domain, cls) {
+                        return domain === "GROUND" ? "truck" : cls === "ATTACK_HELICOPTER" ? "helo"
+                             : cls === "UAV_FIXED_WING" ? "wing" : "quad"
+                    }
+                    function trackIcon(t) {
+                        return iconShape(t.domain, t.objClass) + "_" +
+                               (t.engState === "NEUTRALIZED" ? "dead" : iconColour(t.identity))
+                    }
+                    function trackSymbol(t) {
+                        var id = t.identity
+                        if (t.domain === "GROUND")
+                            return id === "HOSTILE" ? "gnd_hostile_truck" : id === "SUSPECT" ? "gnd_suspect_truck" : "gnd_unknown"
+                        if (id === "HOSTILE") return t.objClass === "ATTACK_HELICOPTER" ? "air_hostile_helo" : "air_hostile_uav"
+                        if (id === "SUSPECT") return "air_suspect_uav"
+                        if (id === "NEUTRAL") return "air_neutral_uav"
+                        return "air_unknown"
                     }
 
                     function drawAcoustic(ctx, lat, lon, label, detected) {
                         var x = lonToX(lon), y = latToY(lat)
                         if (detected) {
-                            // Detection glow ring
-                            ctx.beginPath(); ctx.arc(x, y, 18, 0, Math.PI*2)
-                            ctx.strokeStyle = "rgba(249,168,37,0.5)"; ctx.lineWidth = 3; ctx.stroke()
+                            ctx.beginPath(); ctx.arc(x, y, 14, 0, Math.PI*2)
+                            ctx.strokeStyle = "rgba(255,213,79,0.8)"; ctx.lineWidth = 2.5; ctx.stroke()
                         }
-                        for (var i = 2; i >= 1; i--) {
-                            ctx.beginPath(); ctx.arc(x, y, 6 + i*5, -Math.PI*0.6, Math.PI*0.6)
-                            var alpha = detected ? "0.7" : "0.3"
-                            ctx.strokeStyle = "rgba(249,168,37," + alpha + ")"; ctx.lineWidth = 1.5; ctx.stroke()
-                        }
-                        ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI*2)
-                        ctx.fillStyle = detected ? "#FFD54F" : "#FFF9C4"
-                        ctx.strokeStyle = "#F9A825"; ctx.lineWidth = 2
-                        ctx.fill(); ctx.stroke()
-                        lbl(ctx, label, x+10, y+4, detected ? "#FFD54F" : "#FFF9C4")
                     }
 
                     // ── Acoustic bearing line (detection cue) ──────────
@@ -781,19 +1059,11 @@ ApplicationWindow {
                     }
 
                     function drawSeismic(ctx, lat, lon, label, detected) {
-                        var x = lonToX(lon), y = latToY(lat), r = 7
+                        var x = lonToX(lon), y = latToY(lat)
                         if (detected) {
-                            ctx.beginPath(); ctx.arc(x, y, 16, 0, Math.PI*2)
-                            ctx.strokeStyle = "rgba(255,193,7,0.5)"; ctx.lineWidth = 3; ctx.stroke()
+                            ctx.beginPath(); ctx.arc(x, y, 14, 0, Math.PI*2)
+                            ctx.strokeStyle = "rgba(255,152,0,0.85)"; ctx.lineWidth = 2.5; ctx.stroke()
                         }
-                        ctx.save()
-                        ctx.translate(x, y); ctx.rotate(Math.PI/4)
-                        ctx.fillStyle = detected ? "#FFD740" : "#FFE082"
-                        ctx.strokeStyle = "#F57F17"; ctx.lineWidth = 2
-                        ctx.beginPath(); ctx.rect(-r*0.75, -r*0.75, r*1.5, r*1.5)
-                        ctx.fill(); ctx.stroke()
-                        ctx.restore()
-                        lbl(ctx, label, x+10, y+4, detected ? "#FFD740" : "#FFE082")
                     }
 
                     // ── Geo move helper (WGS-84) ─────────────────────
@@ -890,7 +1160,6 @@ ApplicationWindow {
                             var mx = lonToX(centre[i].lon), my = latToY(centre[i].lat)
                             ctx.beginPath(); ctx.arc(mx, my, 4, 0, Math.PI*2)
                             ctx.fillStyle = "#FF9800"; ctx.fill()
-                            lbl(ctx, "+" + (centre[i].t / 60) + " min", mx + 7, my - 5, "#FFCC80")
                         }
 
                         // ── Current estimated position (diamond) ─────
@@ -904,39 +1173,14 @@ ApplicationWindow {
                         ctx.restore()
                         ctx.beginPath(); ctx.arc(px, py, 12 + conf*5, 0, Math.PI*2)
                         ctx.strokeStyle = "rgba(255,152,0,0.35)"; ctx.lineWidth = 1.5; ctx.stroke()
-                        lbl(ctx, "EST " + (conf*100).toFixed(0)+"%", px+14, py-6, "#FF9800")
                     }
 
-                    function drawPVO(ctx, lat, lon, label, armed) {
-                        var x = lonToX(lon), y = latToY(lat), r = 9
-                        ctx.beginPath()
-                        for (var i = 0; i < 6; i++) {
-                            var a = Math.PI/6 + i * Math.PI/3
-                            if (i===0) ctx.moveTo(x+r*Math.cos(a), y+r*Math.sin(a))
-                            else       ctx.lineTo(x+r*Math.cos(a), y+r*Math.sin(a))
-                        }
-                        ctx.closePath()
-                        ctx.fillStyle   = armed ? "#EF9A9A" : "#546E7A"
-                        ctx.strokeStyle = armed ? "#C62828" : "#37474F"
-                        ctx.lineWidth = 2; ctx.fill(); ctx.stroke()
-                        ctx.fillStyle = "#FFFFFF"
-                        ctx.beginPath()
-                        ctx.moveTo(x, y-4); ctx.lineTo(x-3, y+3); ctx.lineTo(x+3, y+3)
-                        ctx.closePath(); ctx.fill()
-                        lbl(ctx, label, x+13, y+4, armed ? "#EF9A9A" : "#90A4AE")
+                    function drawPVO(ctx, lat, lon, label, armed, gun) {
+                        var x = lonToX(lon), y = latToY(lat)
                     }
 
                     function drawGG(ctx, lat, lon, label, armed) {
-                        var x = lonToX(lon), y = latToY(lat), r = 8
-                        ctx.fillStyle   = armed ? "#CE93D8" : "#546E7A"
-                        ctx.strokeStyle = armed ? "#6A1B9A" : "#37474F"
-                        ctx.lineWidth = 2
-                        ctx.beginPath(); ctx.rect(x-r, y-r, r*2, r*2); ctx.fill(); ctx.stroke()
-                        ctx.fillStyle = "#FFFFFF"
-                        ctx.beginPath()
-                        ctx.moveTo(x, y+4); ctx.lineTo(x-3, y-3); ctx.lineTo(x+3, y-3)
-                        ctx.closePath(); ctx.fill()
-                        lbl(ctx, label, x+13, y+4, armed ? "#CE93D8" : "#90A4AE")
+                        var x = lonToX(lon), y = latToY(lat)
                     }
 
                     function drawTarget(ctx, lat, lon) {
@@ -950,7 +1194,6 @@ ApplicationWindow {
                         ctx.strokeStyle = "#FFFFFF"; ctx.lineWidth = 1.5
                         ctx.beginPath(); ctx.moveTo(x-3,y-3); ctx.lineTo(x+3,y+3); ctx.stroke()
                         ctx.beginPath(); ctx.moveTo(x+3,y-3); ctx.lineTo(x-3,y+3); ctx.stroke()
-                        lbl(ctx, "TGT-001", x+14, y, "#F44336")
                     }
 
                     function drawIntercept(ctx, lat, lon) {
@@ -959,7 +1202,6 @@ ApplicationWindow {
                         ctx.beginPath(); ctx.arc(x, y, 10, 0, Math.PI*2); ctx.stroke()
                         ctx.beginPath(); ctx.moveTo(x-14,y); ctx.lineTo(x+14,y); ctx.stroke()
                         ctx.beginPath(); ctx.moveTo(x,y-14); ctx.lineTo(x,y+14); ctx.stroke()
-                        lbl(ctx, "INTERCEPT", x+14, y-8, "#FF9800")
                     }
 
                     function drawTrajectory(ctx, lat1, lon1, lat2, lon2) {
@@ -1015,7 +1257,50 @@ ApplicationWindow {
                         ctx.beginPath()
                         ctx.moveTo(ax, ay-8); ctx.lineTo(ax+7, ay); ctx.lineTo(ax, ay+8); ctx.lineTo(ax-7, ay)
                         ctx.closePath(); ctx.fill(); ctx.stroke()
-                        lbl(ctx, a.id, ax + 10, ay + 4, "#FFD54F")
+                    }
+
+                    // Serbia border / administrative line (Natural Earth 1:10m)
+                    function drawBorder(ctx) {
+                        var b = root.borderData
+                        if (!b || !b.lines) return
+                        for (var i = 0; i < b.lines.length; i++) {
+                            var ln = b.lines[i]
+                            ctx.beginPath()
+                            for (var k = 0; k < ln.length; k++) {
+                                var x = lonToX(ln[k].lon), y = latToY(ln[k].lat)
+                                if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y)
+                            }
+                            ctx.setLineDash([]); ctx.lineWidth = 4; ctx.strokeStyle = "rgba(0,0,0,0.55)"; ctx.stroke()
+                            ctx.setLineDash([10, 6]); ctx.lineWidth = 2; ctx.strokeStyle = "rgba(255,82,82,0.95)"; ctx.stroke()
+                        }
+                        ctx.setLineDash([])
+                    }
+
+                    // Readiness: alert ring, threat axes and the manned interception lines
+                    function drawReadiness(ctx) {
+                        var r = root.readinessData, ld = root.laydownData
+                        if (!r || !r.border || !ld || r.phase === "CALM") return
+                        var bx = lonToX(ld.base.lon), by = latToY(ld.base.lat)
+                        ctx.setLineDash([3, 7]); ctx.lineWidth = 1
+                        ctx.strokeStyle = r.war ? "rgba(255,82,82,0.45)" : "rgba(255,152,0,0.5)"
+                        ctx.beginPath(); ctx.arc(bx, by, metresToPx(ld.base.lat, r.alertRangeM), 0, Math.PI*2); ctx.stroke()
+                        for (var i = 0; i < r.axes.length; i++) {
+                            var e = _geoMove(ld.base.lat, ld.base.lon, r.axes[i], r.alertRangeM)
+                            ctx.setLineDash([12, 6]); ctx.lineWidth = 2; ctx.strokeStyle = "rgba(255,152,0,0.75)"
+                            ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(lonToX(e.lon), latToY(e.lat)); ctx.stroke()
+                        }
+                        ctx.setLineDash([])
+                        // UAV patrol orbits and UGV blocking positions
+                        for (var u = 0; u < r.uavStations.length; u++) {
+                            var su = r.uavStations[u]
+                            ctx.strokeStyle = "rgba(41,182,246,0.85)"; ctx.lineWidth = 1.5; ctx.setLineDash([4, 4])
+                            ctx.beginPath(); ctx.arc(lonToX(su.lon), latToY(su.lat), Math.max(6, metresToPx(su.lat, 300)), 0, Math.PI*2); ctx.stroke()
+                        }
+                        for (var g = 0; g < r.ugvStations.length; g++) {
+                            var sg = r.ugvStations[g], gx = lonToX(sg.lon), gy = latToY(sg.lat)
+                            ctx.setLineDash([]); ctx.strokeStyle = "rgba(41,182,246,0.9)"; ctx.lineWidth = 2
+                            ctx.strokeRect(gx - 9, gy - 9, 18, 18)
+                        }
                     }
 
                     function drawGroundArea(ctx, bb) {
@@ -1040,9 +1325,6 @@ ApplicationWindow {
                             ctx.strokeStyle = "rgba(128,203,196," + (root.editMode ? "0.8" : "0.4") + ")"; ctx.lineWidth = 1
                             ctx.beginPath(); ctx.arc(x, y, metresToPx(r.lat, r.rangeM), 0, Math.PI*2); ctx.stroke()
                             ctx.setLineDash([])
-                            ctx.fillStyle = "#80CBC4"
-                            ctx.beginPath(); ctx.moveTo(x, y-7); ctx.lineTo(x+6, y+5); ctx.lineTo(x-6, y+5); ctx.closePath(); ctx.fill()
-                            lbl(ctx, r.label + "  30 km", x + 8, y + 12, "#80CBC4")
                         }
                         if (!root.editMode) return
                         // Edit mode: acoustic 10 km (air) + 2.5 km (ground), seismic ~8 km (ground)
@@ -1092,11 +1374,14 @@ ApplicationWindow {
 
                     function drawDrivability(ctx) {
                         var d = root.drivData
-                        if (!d || !d.ready || !d.url) return
-                        if (!isImageLoaded(d.url)) { loadImage(d.url); return }
+                        var url = root.drivSmoothUrl
+                        if (!d || !d.ready || !url) return
+                        if (!isImageLoaded(url)) { loadImage(url); return }
                         var x0 = lonToX(d.bbox.lonMin), y0 = latToY(d.bbox.latMax)
                         var x1 = lonToX(d.bbox.lonMax), y1 = latToY(d.bbox.latMin)
-                        ctx.drawImage(d.url, x0, y0, x1 - x0, y1 - y0)
+                        ctx.globalAlpha = root.driveOpacity
+                        ctx.drawImage(url, x0, y0, x1 - x0, y1 - y0)
+                        ctx.globalAlpha = 1.0
                     }
 
                     function drawDriveLegend(ctx) {
@@ -1128,63 +1413,23 @@ ApplicationWindow {
                         var p = _geoMove(t.lat, t.lon, t.headingDeg, t.speedMs * 60)
                         ctx.strokeStyle = col; ctx.lineWidth = 1.5
                         ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(lonToX(p.lon), latToY(p.lat)); ctx.stroke()
-                        // NATO-style track symbol: hostile = diamond, others = square;
-                        // ground tracks get a filled base bar
-                        ctx.lineWidth = 2
-                        if (t.domain === "GROUND") {
-                            drawTruck(ctx, x, y, col, true)
-                        } else {
-                            ctx.beginPath()
-                            if (t.identity === "HOSTILE" || t.identity === "SUSPECT") {
-                                ctx.moveTo(x, y-8); ctx.lineTo(x+8, y); ctx.lineTo(x, y+8); ctx.lineTo(x-8, y); ctx.closePath()
-                            } else {
-                                ctx.rect(x-6, y-6, 12, 12)
-                            }
-                            ctx.stroke()
-                            if (t.objClass === "ATTACK_HELICOPTER") {
-                                ctx.fillStyle = col; ctx.font = "bold 9px sans-serif"; ctx.fillText("H", x - 3, y + 3)
-                            }
-                        }
+                        // NATO track symbol (APP-6): frame = identity, icon = platform;
+                        // neutralised tracks fade out
+                        var dead = t.engState === "NEUTRALIZED"
                         if (t.engState === "ENGAGING") {
-                            ctx.strokeStyle = root.pulsePhase ? "#FF1744" : "#FF8A80"
-                            ctx.beginPath(); ctx.arc(x, y, 14, 0, Math.PI*2); ctx.stroke()
+                            ctx.strokeStyle = root.pulsePhase ? "#FF1744" : "#FF8A80"; ctx.lineWidth = 2
+                            ctx.beginPath(); ctx.arc(x, y, 20, 0, Math.PI*2); ctx.stroke()
                         }
-                        lbl(ctx, t.trackId + "  " + (t.speedMs*3.6).toFixed(0) + " km/h  " +
-                                 (t.domain === "GROUND" ? "TRUCK/UGV" :
-                                  (t.objClass === "ATTACK_HELICOPTER" ? "HELO " : "") + t.altitudeM.toFixed(0) + " m"),
-                            x + 12, y - 6, col)
-                        lbl(ctx, t.identity + (t.engState ? "  " + t.engState : ""), x + 12, y + 6, col)
                     }
 
                     function drawTruth(ctx, g) {
                         var x = lonToX(g.lon), y = latToY(g.lat)
                         var dead = g.state === "DESTROYED" || g.state === "LANDED" || g.state === "DISABLED"
-                        ctx.strokeStyle = dead ? "#9E9E9E" : "rgba(255,255,255,0.7)"; ctx.lineWidth = 1
-                        if (g.domain === "GROUND") {
-                            drawTruck(ctx, x, y, dead ? "#9E9E9E" : "rgba(255,255,255,0.8)", false)
-                        } else if (g.cls === "ATTACK_HELICOPTER") {
-                            ctx.font = "bold 10px sans-serif"; ctx.fillStyle = dead ? "#9E9E9E" : "rgba(255,255,255,0.85)"
-                            ctx.fillText("H", x - 3, y + 4)
-                        } else {
-                            ctx.beginPath(); ctx.moveTo(x-4,y-4); ctx.lineTo(x+4,y+4); ctx.stroke()
-                            ctx.beginPath(); ctx.moveTo(x+4,y-4); ctx.lineTo(x-4,y+4); ctx.stroke()
+                        if (dead) {
+                            ctx.strokeStyle = "rgba(200,200,200,0.7)"; ctx.lineWidth = 1.5
+                            ctx.beginPath(); ctx.moveTo(x-6,y-6); ctx.lineTo(x+6,y+6); ctx.stroke()
+                            ctx.beginPath(); ctx.moveTo(x+6,y-6); ctx.lineTo(x-6,y+6); ctx.stroke()
                         }
-                        // Destroyed wrecks stay as grey markers only — labels are for outcomes that matter
-                        if (g.state === "IMPACT" || g.state === "ARRIVED")
-                            lbl(ctx, g.id + " " + g.state, x + 6, y + 16, "#FF5252")
-                        else if (g.state === "JAMMED")
-                            lbl(ctx, g.id + " JAMMED", x + 6, y + 16, "#BDBDBD")
-                    }
-
-                    // Truck glyph: box body, cab and two wheels (ground vehicles)
-                    function drawTruck(ctx, x, y, color, big) {
-                        var s = big ? 1.0 : 0.6
-                        ctx.fillStyle = color; ctx.strokeStyle = "#000000"; ctx.lineWidth = 1
-                        ctx.fillRect(x - 9*s, y - 5*s, 11*s, 8*s)          // cargo box
-                        ctx.fillRect(x + 3*s, y - 2*s, 6*s, 5*s)           // cab
-                        ctx.strokeRect(x - 9*s, y - 5*s, 11*s, 8*s)
-                        ctx.beginPath(); ctx.arc(x - 5*s, y + 4*s, 2*s, 0, Math.PI*2); ctx.fill(); ctx.stroke()
-                        ctx.beginPath(); ctx.arc(x + 5*s, y + 4*s, 2*s, 0, Math.PI*2); ctx.fill(); ctx.stroke()
                     }
 
                     // Enemy convoy's planned road route — ground truth, never shown to the C2 picture
@@ -1206,8 +1451,33 @@ ApplicationWindow {
                         ctx.strokeStyle = live ? "rgba(239,154,154,0.45)" : "rgba(120,144,156,0.3)"; ctx.lineWidth = 1
                         ctx.beginPath(); ctx.arc(x, y, metresToPx(p.lat, p.rangeM), 0, Math.PI*2); ctx.stroke()
                         ctx.setLineDash([])
-                        drawPVO(ctx, p.lat, p.lon, p.id + "  " + p.ammo + (p.readyIn > 0 ? "  ⟳" + p.readyIn.toFixed(0) + "s" : ""), live)
+                        drawPVO(ctx, p.lat, p.lon, p.id + "  " + p.system + "  " + p.ammo + "+" + p.reserve +
+                                (p.readyIn > 0 ? "  ⟳" + p.readyIn.toFixed(0) + "s" : ""), live, p.gunRangeM > 0)
                         if (p.lastShot) drawShot(ctx, p.lat, p.lon, p.lastShot, "#FF9800")
+                    }
+
+                    function drawGgSite(ctx, g) {
+                        var x = lonToX(g.lon), y = latToY(g.lat)
+                        var live = root.pvoData.ggEnabled && g.ammo > 0
+                        ctx.setLineDash([2, 8])
+                        ctx.strokeStyle = live ? "rgba(206,147,216,0.45)" : "rgba(120,144,156,0.25)"; ctx.lineWidth = 1
+                        ctx.beginPath(); ctx.arc(x, y, metresToPx(g.lat, g.rangeM), 0, Math.PI*2); ctx.stroke()
+                        ctx.setLineDash([])
+                        drawGG(ctx, g.lat, g.lon, g.id + "  " + g.system + "  " + g.ammo, live)
+                        if (g.lastShot) drawShot(ctx, g.lat, g.lon, g.lastShot, "#CE93D8")
+                    }
+
+                    // Munitions in flight: dashed line launcher → aim point, time to impact
+                    function drawMunitions(ctx) {
+                        var ms = root.pvoData ? root.pvoData.munitions : []
+                        for (var i = 0; i < ms.length; i++) {
+                            var m = ms[i]
+                            var x0 = lonToX(m.slon), y0 = latToY(m.slat), x1 = lonToX(m.lon), y1 = latToY(m.lat)
+                            ctx.setLineDash([6, 4])
+                            ctx.strokeStyle = m.weapon === "GUN" ? "#FFE082" : "#FF7043"; ctx.lineWidth = 1.5
+                            ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke()
+                            ctx.setLineDash([])
+                        }
                     }
 
                     // Flash a firing line for a few seconds after a shot
@@ -1221,7 +1491,6 @@ ApplicationWindow {
                         ctx.fillStyle = shot.hit ? "#FF5252" : "#B0BEC5"
                         ctx.beginPath(); ctx.arc(x1, y1, shot.hit ? 9 : 5, 0, Math.PI*2); ctx.fill()
                         ctx.globalAlpha = 1.0
-                        lbl(ctx, shot.hit ? "HIT" : "MISS", x1 + 8, y1 - 8, shot.hit ? "#FF5252" : "#B0BEC5")
                     }
 
                     function drawJamBeam(ctx, lat, lon, aimLat, aimLon) {
@@ -1233,7 +1502,6 @@ ApplicationWindow {
                         ctx.beginPath(); ctx.moveTo(x, y); ctx.arc(x, y, r, ang - half, ang + half); ctx.closePath()
                         ctx.fill()
                         ctx.strokeStyle = "#CE93D8"; ctx.lineWidth = 1; ctx.stroke()
-                        lbl(ctx, "RF JAM", x + Math.cos(ang) * r * 0.6, y + Math.sin(ang) * r * 0.6, "#E1BEE7")
                     }
 
                     function drawRoute(ctx, lat, lon, route) {
@@ -1246,36 +1514,6 @@ ApplicationWindow {
                         var last = route[route.length - 1]
                         ctx.fillStyle = "#A5D6A7"
                         ctx.beginPath(); ctx.arc(lonToX(last.lon), latToY(last.lat), 3, 0, Math.PI*2); ctx.fill()
-                    }
-
-                    function drawLegend(ctx) {
-                        var lx = width - 160, ly = 16, ls = 16, sp = 18
-                        ctx.fillStyle = "rgba(13,27,42,0.85)"
-                        ctx.fillRect(lx-8, ly-8, 158, 11*sp+8)
-                        ctx.strokeStyle = "#2471A3"; ctx.lineWidth = 1
-                        ctx.strokeRect(lx-8, ly-8, 158, 11*sp+8)
-                        ctx.font = "bold 9px sans-serif"
-                        ctx.fillStyle = "#7899AA"; ctx.fillText("LEGEND", lx, ly+3)
-                        ly += sp
-                        var items = [
-                            ["UAV interceptor",    "#C8E6C9"],
-                            ["UGV RF jammer",      "#A5D6A7"],
-                            ["Track HOSTILE",      "#F44336"],
-                            ["Track SUSPECT",      "#FF9800"],
-                            ["Track NEUTRAL",      "#4FC3F7"],
-                            ["Protected asset",    "#FFD54F"],
-                            ["Acoustic sensor",    "#FFF9C4"],
-                            ["PVO site / range",   "#EF9A9A"],
-                            ["Truck/UGV (ground)", "#F44336"],
-                            ["Intercept point",    "#FF9800"]
-                        ]
-                        for (var i = 0; i < items.length; i++) {
-                            ctx.beginPath(); ctx.arc(lx+6, ly, 5, 0, Math.PI*2)
-                            ctx.fillStyle = items[i][1]; ctx.fill()
-                            ctx.fillStyle = "#C8D8E4"
-                            ctx.fillText(items[i][0], lx+15, ly+3)
-                            ly += sp
-                        }
                     }
 
                     function drawScaleBar(ctx) {
@@ -1304,16 +1542,12 @@ ApplicationWindow {
                     onPaint: {
                         var ctx = getContext("2d")
                         ctx.clearRect(0, 0, width, height)
-
-                        // Fallback while tiles load
-                        ctx.fillStyle = "#1A2A3A"
-                        ctx.fillRect(0, 0, width, height)
-
-                        drawTiles(ctx)
                         if (root.showDrive || (root.editMode && root.editTool === "ugv"))
                             drawDrivability(ctx)
                         drawCoverage(ctx)
+                        drawBorder(ctx)
                         drawZone(ctx)
+                        drawReadiness(ctx)
 
                         var ld = root.laydownData
                         if (ld) {
@@ -1340,8 +1574,11 @@ ApplicationWindow {
                             if (root.pvoData)
                                 for (var pi = 0; pi < root.pvoData.sites.length; pi++)
                                     drawPvoSite(ctx, root.pvoData.sites[pi])
-                            for (var gi2 = 0; gi2 < ld.gg.length; gi2++)
-                                drawGG(ctx, ld.gg[gi2].lat, ld.gg[gi2].lon, ld.gg[gi2].label, ld.gg[gi2].armed)
+                            if (root.pvoData) {
+                                for (var gi2 = 0; gi2 < root.pvoData.gg.length; gi2++)
+                                    drawGgSite(ctx, root.pvoData.gg[gi2])
+                                drawMunitions(ctx)
+                            }
                         }
 
                         // UGV route (artemides-trax A* or straight-line fallback)
@@ -1355,13 +1592,8 @@ ApplicationWindow {
                             var g = root.ugvsData[gj]
                             if (g.jamming && g.jamAim) drawJamBeam(ctx, g.lat, g.lon, g.jamAim.lat, g.jamAim.lon)
                             if (g.lastShot) drawShot(ctx, g.lat, g.lon, g.lastShot, "#FFEB3B")
-                            drawUGV(ctx, g.lat, g.lon, g.deviceId)
                         }
-                        // Interceptors are only visible once they leave the pad
-                        for (var uj = 0; uj < root.uavsData.length; uj++) {
-                            var u = root.uavsData[uj]
-                            if (u.airborne) drawUAV(ctx, u.lat, u.lon, u.deviceId + "  " + u.altitudeM.toFixed(0) + " m")
-                        }
+                        // UGV / interceptor symbols themselves are Image items (symLayer)
 
                         // Ground truth (debug overlay — not visible to the C2 chain)
                         if (root.showTruth) {
@@ -1399,7 +1631,6 @@ ApplicationWindow {
                             lbl(ctx, "MOVE " + pk.label + " → click new position", px + 20, py - 14, "#FFEB3B")
                         }
 
-                        drawLegend(ctx)
                         if (root.showDrive || (root.editMode && root.editTool === "ugv")) drawDriveLegend(ctx)
                         drawScaleBar(ctx)
                         drawNorth(ctx)
@@ -1440,6 +1671,8 @@ ApplicationWindow {
                                         { k: "SUSPECT", v: root.countIdentity("SUSPECT"), c: "#FF9800" },
                                         { k: "NEUTRAL", v: root.countIdentity("NEUTRAL"), c: "#4FC3F7" },
                                         { k: "KILLS",   v: root.statsData.kills,          c: "#66BB6A" },
+                                        { k: "OWN LOST", v: root.statsData.ownLosses || 0,
+                                          c: (root.statsData.ownLosses || 0) > 0 ? "#FFB74D" : "#78909C" },
                                         { k: "BASE HITS", v: root.statsData.baseHits + (root.statsData.assaults ? "+" + root.statsData.assaults : ""),
                                           c: root.statsData.baseHits + root.statsData.assaults > 0 ? "#FF5252" : "#78909C" },
                                     ]
@@ -1478,6 +1711,9 @@ ApplicationWindow {
                                     anchors { fill: parent; margins: 6 }
                                     spacing: 1
                                     RowLayout {
+                                        Image { source: symbolsInfo.base + mapCanvas.trackSymbol(modelData) + ".svg"
+                                                sourceSize.height: 18; smooth: true
+                                                opacity: modelData.engState === "NEUTRALIZED" ? 0.4 : 1.0 }
                                         Text { text: modelData.trackId; color: root.trackColor(modelData)
                                                font { bold: true; pixelSize: 11 } }
                                         Text { text: modelData.identity + " / " + modelData.threatLevel
@@ -1821,6 +2057,7 @@ ApplicationWindow {
         property string detail1:     ""
         property string detail2:     ""
         property string actionLabel: ""
+        property string badge:       ""        // NATO symbol (symbols/<badge>.svg)
         signal action()
         Layout.fillWidth: true
         height: 96
@@ -1836,7 +2073,9 @@ ApplicationWindow {
 
                 RowLayout {
                     spacing: 6
-                    Rectangle { width: 8; height: 8; radius: 2; color: accentColor }
+                    Rectangle { visible: badge === ""; width: 8; height: 8; radius: 2; color: accentColor }
+                    Image { visible: badge !== ""; source: badge ? symbolsInfo.base + badge + ".svg" : ""
+                            sourceSize.height: 18; smooth: true }
                     Text { text: name; color: accentColor; font { bold: true; pixelSize: 11 } }
                     Item { Layout.fillWidth: true }
                     Text { text: statusText; color: statusColor; font { bold: true; pixelSize: 10 } }
@@ -1875,11 +2114,35 @@ ApplicationWindow {
         }
     }
 
+    // A plain map icon (icons/<shape>_<colour>.svg) centred on lat/lon, rotated to
+    // the heading; details on hover — names and badges live in the side lists
+    component MapIcon: Image {
+        property string icon: ""
+        property real lat: 0
+        property real lon: 0
+        property real size: 26
+        property real heading: 0
+        property string tip: ""
+        source: icon ? symbolsInfo.icons + icon + ".svg" : ""
+        width: size; height: size
+        sourceSize: Qt.size(Math.ceil(size), Math.ceil(size))
+        x: mapCanvas.lonToX(lon) - size / 2
+        y: mapCanvas.latToY(lat) - size / 2
+        rotation: heading
+        smooth: true
+        antialiasing: true
+        HoverHandler { id: iconHover }
+        ToolTip.visible: iconHover.hovered && tip !== ""
+        ToolTip.text: tip
+        ToolTip.delay: 200
+    }
+
     component WeaponCard: Item {
+        property string badge:    ""            // NATO symbol (symbols/<badge>.svg)
         property string sysId:    ""
         property string position: ""
         property bool   armed:    false
-        property int    ammo:     0
+        property string ammo:     ""
         property string range:    ""
         Layout.fillWidth: true
         height: 52
@@ -1893,8 +2156,10 @@ ApplicationWindow {
                 anchors { fill: parent; leftMargin: 8; rightMargin: 8; topMargin: 6; bottomMargin: 6 }
                 spacing: 6
 
-                Rectangle { width: 8; height: 8; radius: 2
+                Rectangle { visible: badge === ""; width: 8; height: 8; radius: 2
                              color: armed ? root.c_armed : root.c_standby }
+                Image { visible: badge !== ""; source: badge ? symbolsInfo.base + badge + ".svg" : ""
+                        sourceSize.height: 20; smooth: true; opacity: armed ? 1.0 : 0.5 }
 
                 Column {
                     spacing: 2
@@ -2011,3 +2276,4 @@ ApplicationWindow {
         }
     }
 }
+

@@ -9,6 +9,10 @@ VERSION = open(os.path.join(ROOT, "packaging", "VERSION")).read().strip()
 
 datas = [
     (os.path.join(ROOT, "AMCSDashboard.qml"), "."),
+    (os.path.join(ROOT, "Map3D.qml"), "."),
+    (os.path.join(ROOT, "symbols"), "symbols"),
+    (os.path.join(ROOT, "icons"), "icons"),
+    (os.path.join(ROOT, "sim", "data"), os.path.join("sim", "data")),
     (os.path.join(ROOT, "packaging", "amcs.png"), "packaging"),
 ]
 if os.path.isdir(os.path.join(ROOT, "scenarios")):
@@ -19,7 +23,8 @@ a = Analysis(
     [os.path.join(ROOT, "main.py")],
     pathex=[ROOT],
     datas=datas,
-    hiddenimports=["PyQt6.QtQml", "PyQt6.QtQuick", "PyQt6.QtNetwork"],
+    hiddenimports=["PyQt6.QtQml", "PyQt6.QtQuick", "PyQt6.QtQuick3D", "PyQt6.QtNetwork",
+                   "sim.engine", "sim.terrain"],
     excludes=["tkinter", "PyQt6.QtWebEngineCore", "PyQt6.QtWebEngineQuick",
               "PyQt6.QtWebEngineWidgets", "PyQt6.QtMultimedia", "PyQt6.Qt3DCore",
               "PyQt6.QtBluetooth", "PyQt6.QtSql", "PyQt6.QtTest"],

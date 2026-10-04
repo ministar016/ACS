@@ -267,11 +267,15 @@ class MultiTargetTracker:
     def _bearing_innov(self, trk: _Track, b: BearingMeas):
         dx, dy = trk.x[0] - b.sx, trk.x[1] - b.sy
         r2 = max(dx * dx + dy * dy, 1.0)
-        H = [dy / r2, -dx / r2, 0.0, 0.0]
+        h0, h1 = dy / r2, -dx / r2
+        H = [h0, h1, 0.0, 0.0]
         pred = math.atan2(dx, dy)
         innov = _wrap_pi(b.bearing_rad - pred)
-        PHt = [sum(trk.P[i][k] * H[k] for k in range(4)) for i in range(4)]
-        S = sum(H[i] * PHt[i] for i in range(4)) + b.sigma_rad ** 2
+        # H has zeros in the velocity columns: PHᵀ and S need only P's first two columns
+        P = trk.P
+        PHt = [P[0][0] * h0 + P[0][1] * h1, P[1][0] * h0 + P[1][1] * h1,
+               P[2][0] * h0 + P[2][1] * h1, P[3][0] * h0 + P[3][1] * h1]
+        S = h0 * PHt[0] + h1 * PHt[1] + b.sigma_rad ** 2
         return innov, S, H, PHt, math.sqrt(r2)
 
     def _update_bearing(self, t: float, trk: _Track, b: BearingMeas) -> None:
@@ -312,19 +316,26 @@ class MultiTargetTracker:
         stray = []
         for b in bearings:
             best, best_n = None, _GATE_BRG_SIG
+            max_r2 = (b.max_range_m * 1.3) ** 2
+            sig2 = b.sigma_rad ** 2
             for trk in self._tracks.values():
                 if b.domain != "UNKNOWN" and trk.domain not in ("UNKNOWN", b.domain):
                     continue
-                dx, dy = trk.x[0] - b.sx, trk.x[1] - b.sy
+                x, P = trk.x, trk.P
+                dx, dy = x[0] - b.sx, x[1] - b.sy
                 r2 = dx * dx + dy * dy
-                if r2 > (b.max_range_m * 1.3) ** 2:
+                if r2 > max_r2:
                     continue
                 # Cheap angular pre-gate before the full EKF innovation
-                ang = abs(_wrap_pi(b.bearing_rad - math.atan2(dx, dy)))
-                s_approx = (trk.P[0][0] + trk.P[1][1]) / max(r2, 1.0) + b.sigma_rad ** 2
-                if ang > _GATE_BRG_SIG * math.sqrt(s_approx) * 1.5:
+                pred = math.atan2(dx, dy)
+                innov = _wrap_pi(b.bearing_rad - pred)
+                s_approx = (P[0][0] + P[1][1]) / max(r2, 1.0) + sig2
+                if abs(innov) > _GATE_BRG_SIG * math.sqrt(s_approx) * 1.5:
                     continue
-                innov, S, _, _, rng = self._bearing_innov(trk, b)
+                # EKF innovation variance S = H P Hᵀ + σ² (same as _bearing_innov)
+                r2c = max(r2, 1.0)
+                h0, h1 = dy / r2c, -dx / r2c
+                S = h0 * (P[0][0] * h0 + P[0][1] * h1) + h1 * (P[1][0] * h0 + P[1][1] * h1) + sig2
                 n = abs(innov) / math.sqrt(S)
                 if n < best_n:
                     best, best_n = trk, n

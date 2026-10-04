@@ -23,6 +23,8 @@ import json
 import math
 from dataclasses import dataclass, replace
 
+from . import systems
+
 _M_PER_DEG_LAT = 111_320.0
 
 ACOUSTIC_RANGE_M = 10_000.0      # UAV detection range of an acoustic array
@@ -51,6 +53,7 @@ class Site:
     lat: float
     lon: float
     label: str = ""
+    system: str = ""                  # systems.CATALOG code (radars, GG sites)
 
 
 @dataclass(frozen=True)
@@ -76,6 +79,13 @@ class PvoSpec:
     range_m:  float = 5_000.0
     ammo:     int   = 8
     label:    str   = ""
+    system:   str   = ""              # systems.CATALOG code; range / ammo follow it
+
+    @classmethod
+    def of(cls, site_id: str, lat: float, lon: float, system: str, label: str = "") -> "PvoSpec":
+        spec = systems.get(system)
+        return cls(site_id, lat, lon, range_m=spec.range_m, ammo=spec.ready + spec.reserve,
+                   label=label, system=system)
 
 
 @dataclass(frozen=True)
@@ -152,7 +162,8 @@ class Laydown:
     def with_zone_radius(self, radius_m: float) -> "Laydown":
         return replace(self, zone_radius_m=min(ZONE_RADIUS_MAX, max(ZONE_RADIUS_MIN, radius_m)))
 
-    def add_site(self, kind: str, lat: float, lon: float) -> tuple["Laydown", Site | PvoSpec]:
+    def add_site(self, kind: str, lat: float, lon: float,
+                 system: str | None = None) -> tuple["Laydown", Site | PvoSpec]:
         prefix, label_fmt = _KIND_NAMING[kind]
         field_name = _KIND_FIELD[kind]
         existing = {x.site_id for x in getattr(self, field_name)}
@@ -161,8 +172,9 @@ class Laydown:
             n += 1
         sid = f"{prefix}-{n:02d}"
         label = label_fmt.format(n=n, sid=sid)
-        site = (PvoSpec(sid, lat, lon, range_m=5_000.0, ammo=8, label=label) if kind == "pvo"
-                else Site(sid, lat, lon, label))
+        system = system if systems.get(system) else systems.DEFAULT_SYSTEM.get(kind, "")
+        site = (PvoSpec.of(sid, lat, lon, system, label) if kind == "pvo"
+                else Site(sid, lat, lon, label, system))
         return replace(self, **{field_name: getattr(self, field_name) + (site,)}), site
 
     def nearest(self, lat: float, lon: float, max_m: float = 600.0,
@@ -199,11 +211,13 @@ class Laydown:
     def to_dict(self) -> dict:
         """GUI view of the laydown."""
         def sites(ss, **extra):
-            return [dict(id=s.site_id, lat=s.lat, lon=s.lon, label=s.label or s.site_id, **extra) for s in ss]
+            return [dict(id=s.site_id, lat=s.lat, lon=s.lon, label=s.label or s.site_id,
+                         system=s.system, systemName=_sys_name(s.system), **extra) for s in ss]
 
         def pvo_sites():
             return [dict(id=p.site_id, lat=p.lat, lon=p.lon, label=p.label or p.site_id,
-                         rangeM=p.range_m, ammo=p.ammo, armed=True) for p in self.pvo]
+                         rangeM=p.range_m, ammo=p.ammo, armed=True, system=p.system,
+                         systemName=_sys_name(p.system)) for p in self.pvo]
 
         lat_min, lat_max, lon_min, lon_max = self.ground_bbox
         return {
@@ -212,12 +226,14 @@ class Laydown:
             "zoneRadiusM": self.zone_radius_m,
             "mapCenter":  {"lat": self.base.lat, "lon": self.base.lon, "zoom": self.map_zoom},
             "acoustic":   sites(self.acoustic, rangeM=ACOUSTIC_RANGE_M, groundRangeM=ACOUSTIC_GROUND_RANGE_M),
-            "radars":     sites(self.radars, rangeM=RADAR_RANGE_M),
+            "radars":     [dict(r, rangeM=radar_range_m(r["system"])) for r in sites(self.radars)],
             "seismic":    sites(self.seismic, rangeM=SEISMIC_DETECT_M),
             "ugvs":       sites(self.ugvs),
             "interceptors": self.interceptors,
             "pvo":        pvo_sites(),
-            "gg":         [dict(g, armed=i < 2) for i, g in enumerate(sites(self.gg))],
+            "gg":         [dict(g, armed=True, rangeM=(systems.get(g["system"]).range_m
+                                                       if systems.get(g["system"]) else 0))
+                           for g in sites(self.gg)],
             "ugvCharges": self.ugv_charges,
             "convoy":     None if self.convoy is None else {
                 "vehicles": self.convoy.vehicles, "escortDrones": self.convoy.escort_drones,
@@ -227,7 +243,8 @@ class Laydown:
 
     def to_json(self) -> str:
         def sites(ss):
-            return [{"id": s.site_id, "lat": s.lat, "lon": s.lon, "label": s.label} for s in ss]
+            return [dict({"id": s.site_id, "lat": s.lat, "lon": s.lon, "label": s.label},
+                         **({"system": s.system} if s.system else {})) for s in ss]
         doc = {
             "schema": SCHEMA_VERSION,
             "name": self.name,
@@ -246,7 +263,7 @@ class Laydown:
                 "class": t.drone_class,
             } for t in self.threats],
             "pvo": [{"id": p.site_id, "lat": p.lat, "lon": p.lon, "label": p.label,
-                     "range_m": p.range_m, "ammo": p.ammo} for p in self.pvo],
+                     "range_m": p.range_m, "ammo": p.ammo, "system": p.system} for p in self.pvo],
             "gg": sites(self.gg),
             "convoy": None if self.convoy is None else {
                 "vehicles": self.convoy.vehicles, "start_km": list(self.convoy.start_km),
@@ -271,8 +288,11 @@ class Laydown:
         if d.get("schema") != SCHEMA_VERSION:
             raise ValueError(f"unsupported scenario schema {d.get('schema')!r}")
 
-        def sites(items):
-            return tuple(Site(s["id"], float(s["lat"]), float(s["lon"]), s.get("label", "")) for s in items)
+        def sites(items, kind=None):
+            # Files saved before the systems catalog: radars / GG get the default system
+            dflt = systems.DEFAULT_SYSTEM.get(kind, "")
+            return tuple(Site(s["id"], float(s["lat"]), float(s["lon"]), s.get("label", ""),
+                              s.get("system") or dflt) for s in items)
         b = d["base"]
 
         def rel(n_km, e_km):             # legacy files stored PVO / GG as base offsets
@@ -280,8 +300,11 @@ class Laydown:
 
         def pvo(p):
             lat, lon = (p["lat"], p["lon"]) if "lat" in p else rel(p["north_km"], p["east_km"])
-            return PvoSpec(p["id"], float(lat), float(lon), float(p.get("range_m", 5000)),
-                           int(p.get("ammo", 8)), p.get("label", ""))
+            if p.get("system") and systems.get(p["system"]):
+                return PvoSpec(p["id"], float(lat), float(lon), float(p.get("range_m", 5000)),
+                               int(p.get("ammo", 8)), p.get("label", ""), p["system"])
+            return PvoSpec.of(p["id"], float(lat), float(lon),
+                              legacy_pvo_system(float(p.get("range_m", 5000))), p.get("label", ""))
         return cls(
             name=d["name"],
             base=Site(b["id"], float(b["lat"]), float(b["lon"])),
@@ -289,7 +312,7 @@ class Laydown:
             zone_buffer_m=float(d["zone"]["buffer_m"]),
             ground_bbox=tuple(float(x) for x in d["ground_bbox"]),
             acoustic=sites(d.get("acoustic", [])),
-            radars=sites(d.get("radars", [])),
+            radars=sites(d.get("radars", []), "radar"),
             seismic=sites(d.get("seismic", [])),
             ugvs=sites(d.get("ugvs", [])),
             interceptors=int(d.get("interceptors", 2)),
@@ -299,9 +322,11 @@ class Laydown:
                 bool(t.get("hostile", True)), float(t.get("rcs_dbsm", -15)), t.get("class", "UAV_FIXED_WING"),
             ) for t in d.get("threats", [])),
             pvo=tuple(pvo(p) for p in d.get("pvo", [])) or
-                tuple(PvoSpec(p[0], *rel(p[1], p[2])) for p in d.get("pvo_km", [])),
-            gg=sites(d.get("gg", [])) or
-               tuple(Site(g[0], *rel(g[1], g[2]), g[0]) for g in d.get("gg_km", [])),
+                tuple(PvoSpec.of(p[0], *rel(p[1], p[2]), legacy_pvo_system(5_000.0))
+                      for p in d.get("pvo_km", [])),
+            gg=sites(d.get("gg", []), "gg") or
+               tuple(Site(g[0], *rel(g[1], g[2]), g[0], systems.DEFAULT_SYSTEM["gg"])
+                     for g in d.get("gg_km", [])),
             # Files saved before the convoy existed have no "convoy" key: give them
             # the default attack.  An explicit null means "no convoy".
             convoy=(ConvoySpec() if "convoy" not in d else None) if not d.get("convoy") else ConvoySpec(
@@ -335,6 +360,25 @@ _KIND_NAMING = {                      # id prefix, label format
 }
 
 
+def _sys_name(code: str) -> str:
+    spec = systems.get(code)
+    return spec.name if spec else ""
+
+
+def radar_range_m(code: str) -> float:
+    """Ring drawn for a radar site: its range against the reference drone (−15 dBsm)."""
+    spec = systems.get(code)
+    if spec is None or not spec.radar_ref_m:
+        return RADAR_RANGE_M
+    r = spec.radar_ref_m * 10.0 ** ((-15.0 - spec.radar_ref_dbsm) / 40.0)
+    return min(r, spec.detect_m or r)
+
+
+def legacy_pvo_system(range_m: float) -> str:
+    """Generic PVO sites of older files → the real system with that envelope."""
+    return "PASARS_16" if range_m >= 7_000 else "STRELA_10M3"
+
+
 def _presevo_valley() -> Laydown:
     b = (42.27442, 21.606345)            # vojsrb demo focus point
 
@@ -355,7 +399,7 @@ def _presevo_valley() -> Laydown:
             site("ACO-FIELD-02", 0.90, -0.60, "ACO-C"),
             site("ACO-FIELD-03", -1.40, 5.00, "ACO-E"),
         ),
-        radars=(site("RAD-SITE-01", 0.0, 0.0, "RAD-BASE"),),
+        radars=(Site("RAD-SITE-01", *pos(0.0, 0.0), "RAD-BASE", "RPS42"),),
         seismic=(
             site("SEI-FIELD-01", -0.40, -3.00, "SEI-W"),
             site("SEI-FIELD-02", -2.10, 0.30, "SEI-C"),
@@ -377,13 +421,16 @@ def _presevo_valley() -> Laydown:
                        rcs_dbsm=-10.0, drone_class="UAV_FIXED_WING"),
         ),
         pvo=(
-            PvoSpec("PVO-ALPHA-01", *pos(2.60, -3.60), range_m=5_000, ammo=8),
-            PvoSpec("PVO-ALPHA-02", *pos(2.50, 3.60), range_m=5_000, ammo=8),
-            PvoSpec("PVO-BETA-03", *pos(-2.60, -3.50), range_m=8_000, ammo=4),
-            PvoSpec("PVO-BETA-04", *pos(-2.70, 3.50), range_m=8_000, ammo=4),
+            # ALPHA: Strela-10M3 (5 km), BETA: PASARS-16 (40 mm gun 4 km + Mistral 3 8 km)
+            PvoSpec.of("PVO-ALPHA-01", *pos(2.60, -3.60), "STRELA_10M3"),
+            PvoSpec.of("PVO-ALPHA-02", *pos(2.50, 3.60), "STRELA_10M3"),
+            PvoSpec.of("PVO-BETA-03", *pos(-2.60, -3.50), "PASARS_16"),
+            PvoSpec.of("PVO-BETA-04", *pos(-2.70, 3.50), "PASARS_16"),
         ),
-        gg=(site("GG-ZETA-01", -3.30, -2.50), site("GG-ZETA-02", -3.40, 0.00),
-            site("GG-ZETA-03", -3.10, 2.50)),
+        # GG: ALAS surface-to-surface launchers covering the southern approach
+        gg=(Site("GG-ZETA-01", *pos(-3.30, -2.50), "", "ALAS"),
+            Site("GG-ZETA-02", *pos(-3.40, 0.00), "", "ALAS"),
+            Site("GG-ZETA-03", *pos(-3.10, 2.50), "", "ALAS")),
         # 4 vehicles from the west on the road network (artemides A*: start →
         # via → objective is a clean route west of the river), 15 escort drones
         convoy=ConvoySpec(),
