@@ -80,6 +80,10 @@ class UGV:
         self._speed_fn = speed_fn or (lambda lat, lon: UNKNOWN_SPEED_KMH / 3.6)
         self.status   = DeviceStatus.DEPLOYED
 
+        # Interception-line position (None = home) and battle damage
+        self.station: tuple[float, float] | None = None
+        self.destroyed = False
+
         # Route following
         self.route: list[tuple[float, float]] = []
         self.route_source = "at home"
@@ -115,7 +119,22 @@ class UGV:
 
     @property
     def available(self) -> bool:
-        return self.assigned_track is None and self._battery > 15.0
+        return self.assigned_track is None and self._battery > 15.0 and not self.destroyed
+
+    @property
+    def post(self) -> tuple[float, float]:
+        """Where an idle UGV belongs: its interception-line position, else home."""
+        return self.station or self.home
+
+    def destroy(self) -> None:
+        """Struck by an attack drone: out of action for the rest of the scenario."""
+        self.destroyed = True
+        self.release()
+        self.route = []
+        self.route_request = None
+        self._speed = 0.0
+        self.status = DeviceStatus.ERROR
+        self.route_source = "DESTROYED"
 
     def charge_range(self, domain: str) -> float:
         return CHARGE_RANGE_GROUND if domain == "GROUND" else CHARGE_RANGE_AIR
@@ -157,7 +176,8 @@ class UGV:
         self._dwell.clear()
 
     def step(self, target: AerialTarget | None, timestamp: float) -> UGVTelemetry:
-        self._drive()
+        if not self.destroyed:
+            self._drive()
         self._battery = max(0.0, self._battery - _BATTERY_DRAIN * self._dt)
         self._reload = max(0.0, self._reload - self._dt)
 
@@ -214,7 +234,7 @@ class UGV:
         Returns [(target_or_None, hit)] for the shot fired this tick (if any).
         """
         if (self.assigned_track is None or self.weapon != "CHARGE" or self.jam_aim is None
-                or self.charges <= 0 or self._reload > 0):
+                or self.charges <= 0 or self._reload > 0 or self.destroyed):
             return []
         alat, alon = self.jam_aim
         if _haversine_m(self._lat, self._lon, alat, alon) > self.charge_range(self.aim_domain):

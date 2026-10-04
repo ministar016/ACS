@@ -15,6 +15,8 @@ INTERCEPT : dash at 55 m/s (~200 km/h) on a predicted-intercept-point course
             computed from the *tracker's estimate* of the assigned track;
             altitude slews to the track altitude
 RTB       : fly back to the base, then LANDING → IDLE
+EXPENDED  : loitering munition (kamikaze): it detonates on the target —
+            destroying it with P_KILL — and is lost either way
 
 Effect model
 ────────────
@@ -65,6 +67,7 @@ class UAVMode(Enum):
     INTERCEPT = auto()
     RTB       = auto()
     LANDING   = auto()
+    EXPENDED  = auto()      # detonated on a target (kamikaze) — lost
 
 
 class UAV:
@@ -88,6 +91,9 @@ class UAV:
         self._alt            = 0.0
         self._speed          = 0.0
         self._heading        = 0.0
+
+        # Patrol station: orbit centre on an interception line (None = over the base)
+        self.station: tuple[float, float] | None = None
 
         # Guidance input: latest track estimate (x, y, vx, vy, alt) in ENU
         self._track_est: tuple[float, float, float, float, float] | None = None
@@ -114,11 +120,15 @@ class UAV:
 
     @property
     def airborne(self) -> bool:
-        return self.mode != UAVMode.IDLE
+        return self.mode not in (UAVMode.IDLE, UAVMode.EXPENDED)
+
+    @property
+    def expended(self) -> bool:
+        return self.mode == UAVMode.EXPENDED
 
     @property
     def available(self) -> bool:
-        return self.assigned_track is None and self._battery > 20.0
+        return self.assigned_track is None and self._battery > 20.0 and not self.expended
 
     @property
     def xy(self) -> tuple[float, float]:
@@ -132,12 +142,31 @@ class UAV:
             return max(0.0, LAUNCH_TIME_S - self._launch_t)
         return 0.0
 
-    def launch_patrol(self) -> None:
-        """Operator call: take off and hold over the base."""
+    def launch_patrol(self, station: tuple[float, float] | None = None) -> None:
+        """Take off (if needed) and hold an orbit over `station`, or over the base."""
+        if self.expended:
+            return
+        if station is not None:
+            self.station = station
         if self.mode == UAVMode.IDLE:
             self._start_launch(UAVMode.PATROL)
         elif self.mode in (UAVMode.RTB, UAVMode.LANDING):
             self.mode = UAVMode.PATROL
+
+    def resume_station(self) -> None:
+        """After an engagement: back to the patrol station if one is set, else home."""
+        if self.expended:
+            return
+        if self.station is None or self._battery < 30.0:
+            self.station = None
+            self.return_to_base()
+            return
+        self.assigned_track = None
+        self._track_est = None
+        self.solution = None
+        if self.mode not in (UAVMode.IDLE, UAVMode.LANDING):
+            self.mode = UAVMode.PATROL
+            self.status = DeviceStatus.DEPLOYING
 
     def start_intercept(self, track_id: str | None = None) -> None:
         self.assigned_track = track_id
@@ -238,12 +267,24 @@ class UAV:
                     self._armed[tgt.target_id] = True
                 continue
             if miss <= KILL_RADIUS_M:
-                self._armed[tgt.target_id] = False
+                # Kamikaze: the warhead goes off — the target dies with P_KILL, the interceptor always
                 hit = self._rng.random() < P_KILL
                 if hit:
                     tgt.destroy()
                 passes.append((tgt, hit))
+                self._expend()
+                break
         return passes
+
+    def _expend(self) -> None:
+        self.mode = UAVMode.EXPENDED
+        self.status = DeviceStatus.OFFLINE
+        self._speed = 0.0
+        self._alt = 0.0
+        self.station = None
+        self.assigned_track = None
+        self._track_est = None
+        self.solution = None
 
     # ── private ───────────────────────────────────────────────────────────
 
@@ -264,18 +305,19 @@ class UAV:
                 self.status = DeviceStatus.DEPLOYED
 
     def _fly_patrol(self) -> None:
-        """Join and hold a circular orbit over the base."""
-        dist = _haversine_m(self._lat, self._lon, self._base_lat, self._base_lon)
+        """Join and hold a circular orbit over the station (or the base)."""
+        clat, clon = self.station or (self._base_lat, self._base_lon)
+        dist = _haversine_m(self._lat, self._lon, clat, clon)
         if abs(dist - _ORBIT_RADIUS_M) > 30.0:
-            # Fly to the orbit ring first
-            brg_out = _bearing_deg(self._base_lat, self._base_lon, self._lat, self._lon) if dist > 1 else 0.0
-            tlat, tlon = _move(self._base_lat, self._base_lon, brg_out, _ORBIT_RADIUS_M)
+            # Fly to the orbit ring first — at transit speed when the station is far
+            brg_out = _bearing_deg(clat, clon, self._lat, self._lon) if dist > 1 else 0.0
+            tlat, tlon = _move(clat, clon, brg_out, _ORBIT_RADIUS_M)
             hdg = turn_toward(self._heading, _bearing_deg(self._lat, self._lon, tlat, tlon),
                               _MAX_TURN_RATE, self._dt)
-            self._advance(hdg, _SPEED_MS, _ALTITUDE_M)
+            self._advance(hdg, _RTB_SPEED_MS if dist > 1_000 else _SPEED_MS, _ALTITUDE_M)
             return
         # On the ring: fly tangentially (clockwise)
-        brg_out = _bearing_deg(self._base_lat, self._base_lon, self._lat, self._lon)
+        brg_out = _bearing_deg(clat, clon, self._lat, self._lon)
         hdg = turn_toward(self._heading, (brg_out + 90.0) % 360, _MAX_TURN_RATE, self._dt)
         self._advance(hdg, _SPEED_MS, _ALTITUDE_M)
         self.status = DeviceStatus.DEPLOYED

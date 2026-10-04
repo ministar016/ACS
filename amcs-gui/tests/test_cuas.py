@@ -26,6 +26,8 @@ from sim.laydown import DEFAULT_LAYDOWN, Laydown
 from dataclasses import replace as dc_replace
 
 # The original three-drone picture (no convoy, no PVO) isolates the kill chain
+# Engagement-mechanics tests run without the border rules (border=False): the
+# OSM border is 1.5 km from the base, those rules have tests of their own
 BASIC = dc_replace(DEFAULT_LAYDOWN, convoy=None, pvo=())
 from sim.drivability import DrivabilityGrid, classify
 from sim.devices.uav import UAVMode
@@ -178,7 +180,7 @@ class SensorRangeTests(unittest.TestCase):
 
 class EndToEndTests(unittest.TestCase):
     def test_auto_roe_neutralises_hostiles_and_spares_neutral(self):
-        sc = Scenario(dt=0.1, auto_roe=True, laydown=BASIC)
+        sc = Scenario(dt=0.1, auto_roe=True, laydown=BASIC, border=False)
         max_tracks = [0]
 
         def watch(sc, snap):
@@ -202,7 +204,7 @@ class EndToEndTests(unittest.TestCase):
         self.assertLessEqual(max_tracks[0], 4, "duplicate / ghost tracks")
 
     def test_no_engagement_without_approval(self):
-        sc = Scenario(dt=0.1, auto_roe=False, laydown=BASIC)
+        sc = Scenario(dt=0.1, auto_roe=False, laydown=BASIC, border=False)
         _run(sc, 200)
         engs = list(sc.engage.engagements.values())
         self.assertTrue(engs, "hostile tracks should produce proposals")
@@ -210,7 +212,7 @@ class EndToEndTests(unittest.TestCase):
         self.assertTrue(all(t.state != TargetState.DESTROYED for t in sc.targets))
 
     def test_operator_approval_kills_before_zone_entry(self):
-        sc = Scenario(dt=0.1, auto_roe=False, laydown=BASIC)
+        sc = Scenario(dt=0.1, auto_roe=False, laydown=BASIC, border=False)
         kill_pos = {}
 
         def approve_and_watch(sc, snap):
@@ -226,7 +228,7 @@ class EndToEndTests(unittest.TestCase):
                          "with early approval HOSTILE-A must die before entering the zone")
 
     def test_deny_is_respected(self):
-        sc = Scenario(dt=0.1, auto_roe=False, laydown=BASIC)
+        sc = Scenario(dt=0.1, auto_roe=False, laydown=BASIC, border=False)
         for _ in range(3000):
             sc.step()
             if any(e.state == EngState.PROPOSED for e in sc.engage.engagements.values()):
@@ -281,11 +283,17 @@ class FullAttackTests(unittest.TestCase):
         self.assertLessEqual(sc.base_hits, 3)
         civil = next(t for t in sc.targets if t.target_id == "CIVIL-C")
         self.assertIn(civil.state.name, ("FLYING", "EXITED"), "the neutral drone must never be shot")
-        # PVO: at most one shot per minute per site, never beyond its ammunition
+        # PVO: real systems — never beyond ready + reserve missiles and gun bursts
         for site in sc.engage.pvo_sites:
-            ts = shots[site.site_id]
-            self.assertTrue(all(b - a >= 59.9 for a, b in zip(ts, ts[1:])), (site.site_id, ts))
+            spec = site.spec
+            self.assertIsNotNone(spec)
+            if site.destroyed:                               # struck by an attack drone: magazine lost
+                continue
             self.assertGreaterEqual(site.ammo, 0)
+            self.assertGreaterEqual(site.reserve, 0)
+            self.assertGreaterEqual(site.gun_bursts, 0)
+            fired = (spec.ready + spec.reserve - site.ammo - site.reserve) + (spec.gun_bursts - site.gun_bursts)
+            self.assertEqual(fired, site.shots, site.site_id)
         self.assertGreater(sum(p.kills for p in sc.engage.pvo_sites), 5)
         # UGV charges: never more than 3 rounds
         for g in sc.ugvs:
@@ -309,7 +317,8 @@ class FullAttackTests(unittest.TestCase):
             sc.step()
             lead = sc._convoy_lead()
             flying = [e for e in sc.escorts if e.alive and not e.released]
-            if lead and flying and lead.distance_to_m(*base) > 3_000 and int(sc._t * 10) % 300 == 0:
+            # the attack starts at the border (~4 km out), so sample the formation every 10 s
+            if lead and flying and lead.distance_to_m(*base) > 3_000 and int(sc._t * 10) % 100 == 0:
                 samples += 1
                 L = lead.position
                 sides = [((_bearing_deg(L.lat, L.lon, e.position.lat, e.position.lon) - sc._axis_deg) % 360) < 180
@@ -362,18 +371,44 @@ class FullAttackTests(unittest.TestCase):
         self.assertIsNotNone(went)
         self.assertLess(went, c.rendezvous_timeout_s)
 
-    def test_escorts_break_off_when_convoy_closes(self):
+    def test_calm_until_the_border_is_crossed_then_everyone_attacks(self):
         sc = Scenario(dt=0.1)
-        base = (sc.laydown.base.lat, sc.laydown.base.lon)
-        released_at_dist = None
+        sc.engage.pvo_enabled = False                        # realistic PVO kills the escort before it breaks off
+        self.assertIsNotNone(sc.territory)
+        self.assertFalse(sc.war)
+        released_t = None
         for _ in range(14000):
             sc.step()
-            lead = sc._convoy_lead()
-            if lead and any(e.released for e in sc.escorts):
-                released_at_dist = lead.distance_to_m(*base)
+            if not sc.war:
+                # calm: no enemy inside the territory, nobody released, no shots
+                for t in sc.targets:
+                    if t.hostile and t.alive and t.state.name in ("FLYING", "MOVING"):
+                        self.assertFalse(sc.territory.contains(t.position.lat, t.position.lon), t.target_id)
+                self.assertFalse(any(e.released for e in sc.escorts))
+                self.assertFalse(any(e.state.name == "ENGAGING" for e in sc.engage.engagements.values()))
+            elif any(e.released for e in sc.escorts):
+                released_t = sc._t
                 break
-        self.assertIsNotNone(released_at_dist)
-        self.assertLessEqual(released_at_dist, sc.laydown.convoy.release_dist_m + 50)
+        self.assertIsNotNone(sc.war_t, "the convoy crosses the border and starts the war")
+        self.assertTrue(any("WAR — ENEMY-UGV" in ev.text for ev in sc.engage.events), "a vehicle starts it")
+        self.assertLessEqual(released_t - sc.war_t, 1.0, "the air element attacks as soon as the war starts")
+        raiders = [t for t in sc.targets if t.target_id in ("HOSTILE-A", "HOSTILE-B")]
+        for _ in range(20):
+            sc.step()
+        self.assertTrue(all(r.released for r in raiders if r.alive), "single drones join the attack")
+
+    def test_alert_mans_interception_lines_inside_territory(self):
+        sc = Scenario(dt=0.1)
+        sc.engage.pvo_enabled = False
+        for _ in range(600):
+            sc.step()
+        self.assertEqual(sc.engage.phase, "ALERT")
+        self.assertTrue(sc.engage.axes)
+        stations = [u.station for u in sc.uavs] + [g.station for g in sc.ugvs]
+        self.assertTrue(all(st is not None for st in stations))
+        for lat, lon in stations:
+            self.assertTrue(sc.territory.contains(lat, lon), "lines are manned inside the territory")
+        self.assertTrue(all(u.airborne for u in sc.uavs), "interceptors airborne on their patrol orbits")
 
 
 # ── artemides-trax contract (local fake server) ──────────────────────────────
@@ -527,7 +562,7 @@ class ArtemidesLinkTests(unittest.TestCase):
         cfg = ArtemidesConfig(base_url=self.url, token="test-token",
                               telemetry=True, publish_threats=True)
         bridge = ArtemidesBridge(ArtemidesClient(cfg))
-        sc = Scenario(dt=0.1, auto_roe=True)
+        sc = Scenario(dt=0.1, auto_roe=True, border=False)
         sc.engage.pvo_enabled = False       # PVO would kill hostiles in the tick they are declared
         published = False
         for _ in range(3300):
@@ -694,20 +729,44 @@ class InterceptorLifecycleTests(unittest.TestCase):
         self.assertEqual(u.position.alt, 0.0)
 
 
+def _engine(results=None, **kw):
+    """Offline SimEngine collecting editResult payloads."""
+    import sim.engine as busmod
+    def emit(name, payload):
+        if name == "editResult" and results is not None:
+            results.append(payload)
+    return busmod.SimEngine(emit=emit, **kw)
+
+
+class KamikazeTests(unittest.TestCase):
+    def test_interceptor_is_lost_with_its_target(self):
+        sc = Scenario(dt=0.1, auto_roe=True, laydown=BASIC, border=False)
+        spent = None
+        for _ in range(4000):
+            sc.step()
+            spent = next((u for u in sc.uavs if u.expended), None)
+            if spent:
+                break
+        self.assertIsNotNone(spent, "an interceptor detonates on its target")
+        self.assertFalse(spent.airborne)
+        self.assertFalse(spent.available, "an expended interceptor is never re-tasked")
+        self.assertGreaterEqual(sc.engage.own_losses, 1)
+        for _ in range(300):
+            sc.step()
+        self.assertTrue(spent.expended, "it stays lost")
+
+
 class EditorBusTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        os.environ["ARTEMIDES_URL"] = ""                     # offline bus
-        from PyQt6.QtCore import QCoreApplication
-        cls.app = QCoreApplication.instance() or QCoreApplication([])
+        os.environ["ARTEMIDES_URL"] = ""                     # offline engine
 
     def test_placement_rules_and_save_load(self):
         import tempfile
         from pathlib import Path
-        import sim.bus as busmod
-        bus = busmod.SimBus(laydown=DEFAULT_LAYDOWN)
+        import sim.engine as busmod
         results = []
-        bus.editResult.connect(lambda r: results.append(r))
+        bus = _engine(results, laydown=DEFAULT_LAYDOWN)
         bus.setEditMode(True)
         bus.editPlace("ugv", 42.40, 21.60)                   # outside artemides area
         self.assertFalse(results[-1]["ok"])
@@ -737,10 +796,9 @@ class EditorBusTests(unittest.TestCase):
         bus.shutdown()
 
     def test_place_move_delete_all_kinds(self):
-        import sim.bus as busmod
-        bus = busmod.SimBus(laydown=DEFAULT_LAYDOWN)
+        import sim.engine as busmod
         results = []
-        bus.editResult.connect(lambda r: results.append(r))
+        bus = _engine(results, laydown=DEFAULT_LAYDOWN)
         bus.setEditMode(True)
         n_pvo, n_gg, n_sei = len(bus._laydown.pvo), len(bus._laydown.gg), len(bus._laydown.seismic)
         bus.editPlace("pvo", 42.24, 21.55)
@@ -779,13 +837,13 @@ class EditorBusTests(unittest.TestCase):
     def test_startup_uses_last_saved_scenario(self):
         import tempfile, json
         from pathlib import Path
-        import sim.bus as busmod
+        import sim.engine as busmod
         with tempfile.TemporaryDirectory() as tmp:
             old = busmod.SCENARIO_DIR
             busmod.SCENARIO_DIR = Path(tmp)
             try:
                 self.assertEqual(busmod.startup_laydown()[0], DEFAULT_LAYDOWN)   # nothing saved yet
-                bus = busmod.SimBus(laydown=DEFAULT_LAYDOWN)
+                bus = _engine(laydown=DEFAULT_LAYDOWN)
                 bus.saveScenario("Alfa")
                 bus.setZoneRadius(3000)
                 bus.saveScenario("Bravo")
@@ -796,7 +854,7 @@ class EditorBusTests(unittest.TestCase):
                 self.assertIn("last saved", src)
                 self.assertEqual(len(list(Path(tmp).glob("*.json"))), 2, "same name overwrites its file")
                 bus.shutdown()
-                fresh = busmod.SimBus()                       # no laydown given → last saved
+                fresh = _engine()                       # no laydown given → last saved
                 self.assertEqual(fresh._laydown.name, "Alfa")
                 fresh.shutdown()
                 # Legacy file: PVO / GG stored as base offsets
@@ -811,6 +869,100 @@ class EditorBusTests(unittest.TestCase):
                 self.assertEqual(legacy.gg[0].site_id, "GG-01")
             finally:
                 busmod.SCENARIO_DIR = old
+
+
+class SystemsCatalogTests(unittest.TestCase):
+    def test_default_laydown_uses_real_systems(self):
+        from sim import systems
+        codes = {p.system for p in DEFAULT_LAYDOWN.pvo}
+        self.assertEqual(codes, {"STRELA_10M3", "PASARS_16"})
+        self.assertEqual(DEFAULT_LAYDOWN.radars[0].system, "RPS42")
+        self.assertTrue(all(g.system == "ALAS" for g in DEFAULT_LAYDOWN.gg))
+        for spec in systems.CATALOG.values():
+            self.assertTrue(spec.source, f"{spec.code} needs a source")
+
+    def test_legacy_file_maps_to_catalog(self):
+        d = json.loads(DEFAULT_LAYDOWN.to_json())
+        for p in d["pvo"]:
+            p.pop("system")
+        for r in d["radars"] + d["gg"]:
+            r.pop("system", None)
+        ld = Laydown.from_json(json.dumps(d))
+        self.assertEqual([p.system for p in ld.pvo], [p.system for p in DEFAULT_LAYDOWN.pvo])
+        self.assertEqual(ld.radars[0].system, "RPS42")
+
+    def test_editor_places_chosen_system(self):
+        os.environ["ARTEMIDES_URL"] = ""
+        results = []
+        eng = _engine(results, laydown=DEFAULT_LAYDOWN)
+        eng.setEditMode(True)
+        eng.setPlaceSystem("pvo", "PANTSIR_S1")
+        eng.editPlace("pvo", 42.25, 21.55)
+        self.assertTrue(results[-1]["ok"], results[-1])
+        self.assertEqual(eng._laydown.pvo[-1].system, "PANTSIR_S1")
+        self.assertEqual(eng._scenario.engage.pvo_sites[-1].ammo, 12)
+        eng.setPlaceSystem("pvo", "RPS42")                   # a radar is not a PVO system
+        self.assertFalse(results[-1]["ok"])
+        eng.shutdown()
+
+    def test_missile_envelope_and_flight_time(self):
+        sc = Scenario(dt=0.1, laydown=dc_replace(DEFAULT_LAYDOWN, convoy=None), auto_roe=True)
+        for _ in range(3000):
+            sc.step()
+            if sc._munitions:
+                t_impact, site, *_ = sc._munitions[0]
+                self.assertGreater(t_impact, sc._t, "a munition is in flight, not an instant kill")
+                break
+        else:
+            self.fail("no PVO shot in 300 s")
+
+
+class WorkerProcessTests(unittest.TestCase):
+    """The simulation runs in its own process and streams decimated frames."""
+
+    def test_frames_speed_commands_shutdown(self):
+        import multiprocessing as mp, time
+        from sim.worker import worker_main, display_every
+        self.assertEqual([display_every(s) for s in (1, 5, 10, 20, 50)], [5, 5, 10, 20, 50])
+        os.environ["ARTEMIDES_URL"] = ""
+        ctx = mp.get_context("spawn")
+        conn, child = ctx.Pipe()
+        proc = ctx.Process(target=worker_main, args=(child, 0.1, list(sys.path)), daemon=True)
+        proc.start()
+        child.close()
+
+        def frames(seconds):
+            out, t_end = [], time.time() + seconds
+            while time.time() < t_end:
+                if conn.poll(0.05):
+                    msg = conn.recv()
+                    if msg[0] == "frame":
+                        out.append(dict(msg[1]))
+            return out
+        try:
+            first = frames(8.0)
+            self.assertTrue(any("laydownUpdated" in f for f in first))
+            times = [f["timeUpdated"] for f in first if "timeUpdated" in f]
+            self.assertGreater(len(times), 3)
+            conn.send(("speed", 20))
+            fast = frames(3.0)
+            perf = [f["perfUpdated"] for f in fast if "perfUpdated" in f]
+            self.assertTrue(perf and perf[-1]["displayEvery"] == 20)
+            ft = [f["timeUpdated"] for f in fast if "timeUpdated" in f]
+            self.assertGreater(ft[-1] - ft[0], 6.0, "20x must run faster than real time")
+            conn.send(("cmd", "setEditMode", (True,)))
+            ed = frames(1.0)
+            self.assertTrue(any(f.get("editModeChanged") is True for f in ed))
+            conn.send(("shutdown",))
+            self.assertTrue(conn.poll(10))
+            while conn.poll(1):
+                if conn.recv()[0] == "bye":
+                    break
+            proc.join(5)
+            self.assertFalse(proc.is_alive())
+        finally:
+            if proc.is_alive():
+                proc.terminate()
 
 
 if __name__ == "__main__":

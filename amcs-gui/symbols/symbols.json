@@ -1,0 +1,114 @@
+{
+ "air_hostile_uav": {
+  "sidc": "SHAPMFQ--------",
+  "w": 74.4,
+  "h": 86.4,
+  "ax": 37.2,
+  "ay": 52.2
+ },
+ "air_hostile_helo": {
+  "sidc": "SHAPMHA--------",
+  "w": 74.4,
+  "h": 86.4,
+  "ax": 37.2,
+  "ay": 52.2
+ },
+ "air_suspect_uav": {
+  "sidc": "SSAPMFQ--------",
+  "w": 74.4,
+  "h": 86.4,
+  "ax": 37.2,
+  "ay": 52.2
+ },
+ "air_neutral_uav": {
+  "sidc": "SNAPMFQ--------",
+  "w": 74.4,
+  "h": 80.4,
+  "ax": 37.2,
+  "ay": 46.2
+ },
+ "air_unknown": {
+  "sidc": "SUAP-----------",
+  "w": 98.4,
+  "h": 86.4,
+  "ax": 49.2,
+  "ay": 52.2
+ },
+ "air_friend_uav": {
+  "sidc": "SFAPMFQ--------",
+  "w": 74.4,
+  "h": 80.4,
+  "ax": 37.2,
+  "ay": 46.2
+ },
+ "gnd_hostile_truck": {
+  "sidc": "SHGPEVUT-------",
+  "w": 94.8,
+  "h": 94.8,
+  "ax": 47.4,
+  "ay": 47.4
+ },
+ "gnd_suspect_truck": {
+  "sidc": "SSGPEVUT-------",
+  "w": 94.8,
+  "h": 94.8,
+  "ax": 47.4,
+  "ay": 47.4
+ },
+ "gnd_unknown": {
+  "sidc": "SUGPE----------",
+  "w": 91.5,
+  "h": 91.5,
+  "ax": 45.75,
+  "ay": 45.75
+ },
+ "gnd_friend_ugv": {
+  "sidc": "SFGPEVUR-------",
+  "w": 80.4,
+  "h": 80.4,
+  "ax": 40.2,
+  "ay": 40.2
+ },
+ "site_pvo_sam": {
+  "sidc": "SFGPUCDM-------",
+  "w": 98.4,
+  "h": 68.4,
+  "ax": 49.2,
+  "ay": 34.2
+ },
+ "site_pvo_gun": {
+  "sidc": "SFGPUCDG-------",
+  "w": 98.4,
+  "h": 68.4,
+  "ax": 49.2,
+  "ay": 34.2
+ },
+ "site_ssm": {
+  "sidc": "SFGPEWMS-------",
+  "w": 80.4,
+  "h": 80.4,
+  "ax": 40.2,
+  "ay": 40.2
+ },
+ "site_radar": {
+  "sidc": "SFGPESR--------",
+  "w": 80.4,
+  "h": 80.4,
+  "ax": 40.2,
+  "ay": 40.2
+ },
+ "site_sensor": {
+  "sidc": "SFGPESE--------",
+  "w": 80.4,
+  "h": 80.4,
+  "ax": 40.2,
+  "ay": 40.2
+ },
+ "site_base": {
+  "sidc": "SFGPI-----H----",
+  "w": 98.4,
+  "h": 74.4,
+  "ax": 49.2,
+  "ay": 40.2
+ }
+}

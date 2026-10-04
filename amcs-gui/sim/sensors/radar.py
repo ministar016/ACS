@@ -39,11 +39,13 @@ class RadarSensor:
         seed:         int   = 0,
         rcs_ref_dbsm: float = _RCS_REF_DBSM,
         ground_range_m: float = 4_000.0,
+        max_range_m:  float = 0.0,
     ) -> None:
         self.sensor_id    = sensor_id
         self.range_m      = range_m
         self.rcs_ref_dbsm = rcs_ref_dbsm
         self.ground_range_m = ground_range_m
+        self.max_range_m  = max_range_m      # instrumented range cap (0 = none)
         self.frequency_ghz = frequency_ghz
         self._rng         = random.Random(seed)
         self.status       = SensorStatus.ACTIVE
@@ -62,7 +64,8 @@ class RadarSensor:
         self._plat_alt     = alt_m
 
     def effective_range_m(self, rcs_dbsm: float) -> float:
-        return self.range_m * 10.0 ** ((rcs_dbsm - self.rcs_ref_dbsm) / 40.0)
+        r = self.range_m * 10.0 ** ((rcs_dbsm - self.rcs_ref_dbsm) / 40.0)
+        return min(r, self.max_range_m) if self.max_range_m else r
 
     def sample(self, target: AerialTarget, timestamp: float) -> RadarReturn:
         dist_m   = target.distance_to_m(self._plat_lat, self._plat_lon)

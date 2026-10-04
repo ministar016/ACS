@@ -183,6 +183,10 @@ class AerialTarget(_TargetBase):
         self.hostile     = hostile
         self.rcs_dbsm    = rcs_dbsm
         self.drone_class = drone_class
+        # Before the war an enemy keeps out of the defended territory:
+        # keep_out(lat, lon) → True if that point is inside it (None = no rule)
+        self.keep_out = None
+        self.strike_asset: tuple[str, str] | None = None   # (kind, id) when not striking the base
         self.reset()
 
     def reset(self) -> None:
@@ -218,6 +222,18 @@ class AerialTarget(_TargetBase):
 
     def _turn_rate(self) -> float:
         return self._MAX_TURN_RATE
+
+    _AVOID_LOOKAHEAD_M = 400.0
+
+    def _avoid(self, desired: float | None) -> float | None:
+        """Bend a heading so the next _AVOID_LOOKAHEAD_M stay outside the territory."""
+        if desired is None or self.keep_out is None:
+            return desired
+        for off in (0, 15, -15, 30, -30, 45, -45, 60, -60, 90, -90, 120, -120, 150, -150, 180):
+            hdg = (desired + off) % 360
+            if not self.keep_out(*_move(self._lat, self._lon, hdg, self._AVOID_LOOKAHEAD_M)):
+                return hdg
+        return desired
 
     def _speed_cmd(self) -> float | None:
         """Speed hook: commanded speed, or None for the free random walk."""
@@ -260,7 +276,18 @@ class AerialTarget(_TargetBase):
             self._speed = max(self.MIN_SPEED_MS, min(self.MAX_SPEED_MS, self._speed))
 
         dist_m = self._speed * self._dt
-        self._lat, self._lon = _move(self._lat, self._lon, self._heading, dist_m)
+        nlat, nlon = _move(self._lat, self._lon, self._heading, dist_m)
+        if self.keep_out is not None and self.keep_out(nlat, nlon):
+            # Hard rule before the war: never step into the territory — slide along the border
+            for off in (45, -45, 90, -90, 135, -135, 180):
+                hdg = (self._heading + off) % 360
+                tlat, tlon = _move(self._lat, self._lon, hdg, dist_m)
+                if not self.keep_out(tlat, tlon):
+                    self._heading, nlat, nlon = hdg, tlat, tlon
+                    break
+            else:
+                nlat, nlon = self._lat, self._lon
+        self._lat, self._lon = nlat, nlon
 
         if (self.state == TargetState.FLYING and self.aim_point is not None and
                 _haversine_m(self._lat, self._lon, *self.aim_point) <= self.IMPACT_RADIUS_M):
@@ -324,14 +351,47 @@ class EscortDrone(AerialTarget):
             return None
         d = _haversine_m(self._lat, self._lon, *slot)
         if d > 2 * self._WEAVE_RADIUS_M:
-            return _bearing_deg(self._lat, self._lon, *slot)
+            return self._avoid(_bearing_deg(self._lat, self._lon, *slot))
         # On station: weave a small racetrack around the slot (it moves with the convoy)
         here = _bearing_deg(slot[0], slot[1], self._lat, self._lon)
         tlat, tlon = _move(slot[0], slot[1], (here + self._WEAVE_LEAD_DEG) % 360, self._WEAVE_RADIUS_M)
-        return _bearing_deg(self._lat, self._lon, tlat, tlon)
+        return self._avoid(_bearing_deg(self._lat, self._lon, tlat, tlon))
 
     def _turn_rate(self) -> float:
         return self._ESCORT_TURN_RATE
+
+
+class RaiderDrone(AerialTarget):
+    """
+    Single attack drone of the coordinated attack.  Until `go_fn()` says the
+    war has started it loiters around its start point (outside the territory,
+    reconnaissance), then flies at `strike_point` — the base, or a friendly
+    asset on its way there that the scenario picked.
+    """
+
+    _LOITER_RADIUS_M = 600.0
+    _LOITER_TURN     = 20.0
+
+    def __init__(self, *args, go_fn=None, strike_point: tuple[float, float] | None = None, **kw) -> None:
+        self._go_fn = go_fn
+        self.strike_point = strike_point
+        self.released = False
+        super().__init__(*args, **kw)
+        self._home = (self._lat, self._lon)
+
+    def _desired_heading(self) -> float | None:
+        if not self.released and self._go_fn is not None and self._go_fn():
+            self.released = True
+            self.aim_point = self.strike_point
+        if self.released:
+            return super()._desired_heading()
+        here = _bearing_deg(self._home[0], self._home[1], self._lat, self._lon) \
+            if _haversine_m(self._lat, self._lon, *self._home) > 1 else self._heading
+        tlat, tlon = _move(self._home[0], self._home[1], (here + 50.0) % 360, self._LOITER_RADIUS_M)
+        return self._avoid(_bearing_deg(self._lat, self._lon, tlat, tlon))
+
+    def _turn_rate(self) -> float:
+        return self._LOITER_TURN
 
 
 class AttackHelicopter(EscortDrone):
@@ -372,7 +432,7 @@ class AttackHelicopter(EscortDrone):
         self._check_release()
         if self._phase_tag == "ESCORT":
             slot = self.slot_position()
-            return None if slot is None else _bearing_deg(self._lat, self._lon, *slot)
+            return None if slot is None else self._avoid(_bearing_deg(self._lat, self._lon, *slot))
         if self._phase_tag == "EGRESS":
             return (_bearing_deg(*self.strike_point, self._lat, self._lon)) % 360
         return _bearing_deg(self._lat, self._lon, *self._standoff_point())

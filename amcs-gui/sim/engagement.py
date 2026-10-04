@@ -23,10 +23,32 @@ still decides.
 
 PVO (air defence)
 ─────────────────
-PVO sites are weapons-free against declared-HOSTILE air tracks: every site
-that has reloaded (PVO_RELOAD_S = one shot per minute) and has ammunition
-fires at the most urgent hostile drone inside its range.  The operator can
-put all PVO on HOLD.  A PVO kill also closes any engagement on that track.
+PVO sites are weapons-free against declared-HOSTILE air tracks.  Each site is
+a real system from sim/systems.py (Strela-10M3, PASARS-16, Pantsir-S1, …):
+ready missiles + reserve with a reload time, a minimum time between
+engagements (cycle_s), a missile envelope (min/max range and altitude), a
+number of fire channels, and for gun-missile systems a gun that is preferred
+inside gun range (it saves missiles).  A shot is a munition in flight; the
+scenario resolves it at impact (pk).  The operator can put all PVO on HOLD.
+A PVO kill also closes any engagement on that track.
+
+GG sites (ALAS surface-to-surface missiles) engage declared-HOSTILE ground
+tracks the same way, but only while weapons are free (auto-ROE).
+
+Territory and readiness (when the scenario has a border, sim/territory.py)
+──────────────────────────────────────────────────────────────────────────
+Our weapons engage only tracks inside the territory: no proposal, auto-ROE
+approval or PVO / GG shot at anything outside it.  Readiness phases:
+  CALM    nothing within ALERT_RANGE_M of the base
+  ALERT   a non-neutral track within ALERT_RANGE_M (enemy activity):
+          interceptors take off to patrol orbits UAV_LINE_M out along the
+          threat axes, UGVs drive to blocking positions UGV_LINE_M out —
+          all inside the territory, so they act at once if the attack starts
+  ATTACK  a declared-HOSTILE track inside the territory
+Axes are the bearings of the activity, clustered (up to two); positions are
+re-planned every REPLAN_S while on ALERT and frozen once the attack starts.
+After an engagement an interceptor returns to its station and a UGV to its
+blocking position instead of going home.
 
 Weapon–target assignment
 ────────────────────────
@@ -59,11 +81,18 @@ from .models import ThreatLevel
 from .zone import LocalFrame, RestrictedZone
 from .devices.uav import UAV, UAVMode, DASH_SPEED_MS
 from .devices.ugv import UGV, JAM_RANGE_M
+from .systems import SystemSpec
 
-PVO_RELOAD_S  = 60.0
+PVO_RELOAD_S  = 60.0          # cycle of a site without a catalog system
 CHARGE_BIAS_S = 5.0
 
 AUTO_ROE_TTE_S   = 30.0
+ALERT_RANGE_M    = 10_000.0     # enemy activity this close to the base → ALERT
+UAV_LINE_M       = 4_000.0      # interceptor patrol orbits on the threat axis
+UGV_LINE_M       = 2_500.0      # UGV blocking positions on the threat axis
+LINE_SPREAD_M    = 700.0        # lateral spacing on a line
+REPLAN_S         = 30.0
+_AXIS_CLUSTER_DEG = 40.0
 _REROUTE_EVERY_S = 15.0
 _REROUTE_MOVE_M  = 300.0
 
@@ -128,11 +157,41 @@ class PvoSite:
     lat:      float
     lon:      float
     range_m:  float
-    ammo:     int
-    ready_at: float = 0.0
+    ammo:     int                      # ready missiles on the launcher
+    ready_at: float = 0.0              # next missile engagement allowed
     kills:    int = 0
     shots:    int = 0
     last_shot: dict | None = None
+    spec:     SystemSpec | None = None
+    reserve:  int = 0                  # reload rounds
+    reload_until: float | None = None
+    gun_bursts: int = 0
+    gun_ready_at: float = 0.0
+    in_flight: int = 0
+    destroyed: bool = False
+
+    @classmethod
+    def from_spec(cls, site_id: str, lat: float, lon: float, spec: SystemSpec) -> "PvoSite":
+        return cls(site_id, lat, lon, spec.range_m, spec.ready, spec=spec,
+                   reserve=spec.reserve, gun_bursts=spec.gun_bursts)
+
+    @property
+    def name(self) -> str:
+        return self.spec.name if self.spec else "PVO"
+
+    @property
+    def domain(self) -> str:
+        return self.spec.targets if self.spec else "AIR"
+
+    def service(self, t: float) -> None:
+        """Reload the launcher from reserve once it is empty."""
+        if self.ammo > 0 or self.reserve <= 0:
+            return
+        if self.reload_until is None:
+            self.reload_until = t + (self.spec.reload_s if self.spec else 0.0)
+        elif t >= self.reload_until:
+            n = min(self.reserve, self.spec.ready if self.spec else self.reserve)
+            self.ammo, self.reserve, self.reload_until = n, self.reserve - n, None
 
 
 @dataclass
@@ -148,6 +207,12 @@ class EngagementManager:
                  ground_bbox: tuple[float, float, float, float] | None = None,
                  drivability=None, pvo_sites: list[PvoSite] | None = None) -> None:
         self.pvo_sites    = list(pvo_sites or [])
+        self.gg_sites:  list[PvoSite] = []     # surface-to-surface, weapons free only
+        self._claims: dict[str, int] = {}      # track → munitions in flight at it
+        self.territory = None                  # sim/territory.Territory; None = no border rules
+        self.phase = "CALM"                    # CALM | ALERT | ATTACK (readiness)
+        self.axes: list[float] = []            # threat axes, degrees from the base
+        self._plan_t = -1e9
         self.pvo_enabled  = True
         self.ground_bbox  = ground_bbox        # lat_min, lat_max, lon_min, lon_max
         self.drivability  = drivability        # DrivabilityGrid | None
@@ -161,6 +226,7 @@ class EngagementManager:
         self.new_events: list[_Event] = []
         self._next_id = 1
         self.kill_count = 0                  # confirmed kills reported by effectors (BDA)
+        self.own_losses = 0                  # expended interceptors (UGV / site losses: scenario)
         self._denied: set[str] = set()
         self._neutralized: set[str] = set()
         self._last_route_t: dict[str, float] = {}
@@ -213,10 +279,12 @@ class EngagementManager:
             v.domain == "GROUND" and threats[tid].identity == Identity.HOSTILE
             and tid not in self._neutralized for tid, v in tracks.items())
 
-        # 1. Propose engagements for newly hostile tracks
+        self._readiness(tracks, threats)
+
+        # 1. Propose engagements for newly hostile tracks (inside the territory)
         for tid, ta in threats.items():
             if (ta.level == ThreatLevel.HIGH and ta.identity == Identity.HOSTILE
-                    and tracks[tid].confirmed
+                    and tracks[tid].confirmed and self.inside(tracks[tid])
                     and tid not in self._denied and tid not in self._neutralized
                     and not any(e.active and e.track_id == tid for e in self.engagements.values())):
                 eng = Engagement(f"ENG-{self._next_id:03d}", tid, EngState.PROPOSED, t)
@@ -240,7 +308,7 @@ class EngagementManager:
                 kind, eid, tgo = self._best_effector(trk)
                 eng.recommended = eid
                 eng.t_go = tgo
-                if self.auto_roe and (ta.inside_zone or
+                if self.auto_roe and self.inside(trk) and (ta.inside_zone or
                                       (ta.time_to_entry is not None and ta.time_to_entry <= AUTO_ROE_TTE_S)):
                     self.approve(eng.eng_id, operator="AUTO-ROE")
 
@@ -252,19 +320,28 @@ class EngagementManager:
             if eng.state == EngState.ENGAGING:
                 self._guide(eng, trk)
 
-        # 3. Idle UGVs drive back to their home position
+        # 3. Idle UGVs drive to their post: interception-line position, else home
         for ugv in self.jammers:
-            if ugv.assigned_track is None and ugv.goal != ugv.home:
-                ugv.navigate_to(*ugv.home)
+            if ugv.assigned_track is None and not ugv.destroyed and ugv.goal != ugv.post:
+                ugv.navigate_to(*ugv.post)
 
     def report_effect(self, effector_id: str, target_id: str, success: bool, kind: str) -> None:
         """Called by the scenario when an effector's effect lands (BDA)."""
         eng = next((e for e in self.engagements.values()
                     if e.state == EngState.ENGAGING and e.effector_id == effector_id), None)
         label = eng.eng_id if eng else effector_id
+        dev = self._effector(effector_id)
+        spent = getattr(dev, "expended", False)          # kamikaze interceptor: gone after its pass
+        if spent:
+            self.own_losses += 1
         if not success:
             if eng:
                 eng.passes += 1
+                if spent:
+                    # the interceptor is lost: back to APPROVED, the next free effector takes over
+                    eng.state, eng.effector_id, eng.effector_kind = EngState.APPROVED, None, None
+                    self._log("WARN", f"{label} MISS — {effector_id} expended, re-assigning")
+                    return
             self._log("WARN", f"{label} MISS by {effector_id} — re-attacking")
             return
         self.kill_count += 1
@@ -279,49 +356,93 @@ class EngagementManager:
     # ── PVO autonomous fire ───────────────────────────────────────────────
 
     def pvo_fire(self, tracks: dict[str, TrackView],
-                 threats: dict[str, ThreatAssessment]) -> list[tuple[PvoSite, str, float, float]]:
-        """Shots fired this tick: (site, track_id, aim_lat, aim_lon)."""
+                 threats: dict[str, ThreatAssessment]) -> list[tuple]:
+        """
+        Munitions launched this tick: (site, track_id, aim_lat, aim_lon, weapon, range_m).
+        weapon is MISSILE or GUN.  PVO sites fire unless on HOLD; GG sites only
+        while weapons are free.
+        """
         shots = []
-        if not self.pvo_enabled:
-            return shots
-        claimed: set[str] = set()
-        for site in self.pvo_sites:
-            if site.ammo <= 0 or self._t < site.ready_at:
+        sites = (self.pvo_sites if self.pvo_enabled else []) + (self.gg_sites if self.auto_roe else [])
+        for site in sites:
+            if site.destroyed:
+                continue
+            site.service(self._t)
+            spec = site.spec
+            if site.in_flight >= (spec.channels if spec else 1):
                 continue
             sx, sy = self.frame.to_xy(site.lat, site.lon)
-            cands = [
-                (threats[tid].priority, tid) for tid, tv in tracks.items()
-                if tv.domain != "GROUND" and tv.confirmed and tid in threats
-                and threats[tid].identity == Identity.HOSTILE
-                and tid not in self._neutralized and tid not in claimed
-                and math.hypot(tv.x - sx, tv.y - sy) <= site.range_m
-            ]
+            missile_up = site.ammo > 0 and self._t >= site.ready_at and site.reload_until is None
+            gun_up = bool(spec and spec.gun_range_m and site.gun_bursts > 0 and self._t >= site.gun_ready_at)
+            if not (missile_up or gun_up):
+                continue
+            cands = []
+            for tid, tv in tracks.items():
+                if not (tv.confirmed and tid in threats and threats[tid].identity == Identity.HOSTILE
+                        and tid not in self._neutralized and tid not in self._claims and self.inside(tv)):
+                    continue
+                if (tv.domain == "GROUND") != (site.domain == "GROUND"):
+                    continue
+                d = math.hypot(tv.x - sx, tv.y - sy)
+                weapon = None
+                if gun_up and d <= spec.gun_range_m:
+                    weapon = "GUN"
+                elif missile_up and self._in_envelope(site, d, tv):
+                    weapon = "MISSILE"
+                if weapon:
+                    cands.append((threats[tid].priority, tid, weapon, d))
             if not cands:
                 continue
-            _, tid = min(cands)
-            claimed.add(tid)
-            tv = tracks[tid]
-            site.ammo -= 1
+            _, tid, weapon, d = min(cands)
+            self._claims[tid] = self._claims.get(tid, 0) + 1
+            site.in_flight += 1
             site.shots += 1
-            site.ready_at = self._t + PVO_RELOAD_S
+            if weapon == "GUN":
+                site.gun_bursts -= 1
+                site.gun_ready_at = self._t + spec.gun_cycle_s
+            else:
+                site.ammo -= 1
+                site.ready_at = self._t + (spec.cycle_s if spec else PVO_RELOAD_S)
+            tv = tracks[tid]
             lat, lon = self.frame.to_latlon(tv.x, tv.y)
-            shots.append((site, tid, lat, lon))
+            shots.append((site, tid, lat, lon, weapon, d))
         return shots
 
+    @staticmethod
+    def _in_envelope(site: PvoSite, d: float, tv: TrackView) -> bool:
+        spec = site.spec
+        if spec is None:
+            return d <= site.range_m
+        if not spec.min_range_m <= d <= spec.range_m:
+            return False
+        if site.domain == "GROUND":
+            return True
+        return (spec.min_alt_m or 0) <= tv.alt <= (spec.max_alt_m or 1e9)
+
     def report_pvo(self, site: PvoSite, track_id: str, target_id: str | None, hit: bool,
-                   lat: float, lon: float) -> None:
-        site.last_shot = {"t": self._t, "lat": lat, "lon": lon, "hit": hit, "track": track_id}
+                   lat: float, lon: float, weapon: str = "MISSILE") -> None:
+        """A munition launched by pvo_fire() has arrived."""
+        site.in_flight = max(0, site.in_flight - 1)
+        n = self._claims.get(track_id, 0) - 1
+        if n > 0:
+            self._claims[track_id] = n
+        else:
+            self._claims.pop(track_id, None)
+        site.last_shot = {"t": self._t, "lat": lat, "lon": lon, "hit": hit, "track": track_id,
+                          "weapon": weapon}
+        what = "gun burst" if weapon == "GUN" else "missile"
+        left = f"{site.ammo}+{site.reserve} missiles" + (f", {site.gun_bursts} bursts" if site.gun_bursts else "")
         if not hit:
-            self._log("WARN", f"{site.site_id} fired at {track_id} — miss ({site.ammo} left)")
+            self._log("WARN", f"{site.site_id} ({site.name}) {what} at {track_id} — miss ({left} left)")
             return
         site.kills += 1
         self.kill_count += 1
         self._neutralized.add(track_id)
-        self._log("KILL", f"{site.site_id} fired at {track_id} — destroyed {target_id} ({site.ammo} left)")
+        self._log("KILL", f"{site.site_id} ({site.name}) {what} at {track_id} — destroyed {target_id} ({left} left)")
         for eng in self.engagements.values():
             if eng.active and eng.track_id == track_id:
                 self._release(eng)
-                self._end(eng, EngState.NEUTRALIZED, f"PVO {site.site_id}")
+                self._end(eng, EngState.NEUTRALIZED, f"{'GG' if site.domain == 'GROUND' else 'PVO'} {site.site_id}")
 
     # ── views ─────────────────────────────────────────────────────────────
 
@@ -335,6 +456,122 @@ class EngagementManager:
 
     def is_neutralized(self, track_id: str) -> bool:
         return track_id in self._neutralized
+
+    # Before the attack a track must be MARGIN_M (300 m) inside the territory — estimate noise of
+    # escorts flying along the border must not start our fire
+
+    def inside(self, tv: TrackView) -> bool:
+        if self.territory is None:
+            return True
+        if not self.territory.contains_xy(tv.x, tv.y):
+            return False
+        return self.phase == "ATTACK" or self.territory.deep_inside_xy(tv.x, tv.y)
+
+    # ── readiness: alert → interception lines ────────────────────────────
+
+    def _readiness(self, tracks: dict[str, TrackView], threats: dict[str, ThreatAssessment]) -> None:
+        if self.territory is None:
+            return
+        activity = [tv for tid, tv in tracks.items()
+                    if tv.confirmed and tid in threats and threats[tid].identity != Identity.NEUTRAL
+                    and tid not in self._neutralized and math.hypot(tv.x, tv.y) <= ALERT_RANGE_M]
+        changed = False
+        if self.phase == "CALM" and activity:
+            self.phase, changed = "ALERT", True
+            self._log("WARN", f"ALERT — enemy activity, {len(activity)} track(s) within "
+                              f"{ALERT_RANGE_M / 1000:.0f} km: UAV / UGV to interception lines")
+        if self.phase != "ATTACK" and any(
+                threats[tid].identity == Identity.HOSTILE and tv.confirmed and self.inside(tv)
+                for tid, tv in tracks.items() if tid in threats):
+            self.phase, changed = "ATTACK", True
+            self._log("ALERT", "ATTACK — hostile inside the territory, weapons free on intruders")
+        # Lines are planned while on alert; once the attack is on they stay put
+        # (units fight from them and return to them) — no reshuffling mid-battle
+        if self.phase == "CALM" or (self.phase == "ATTACK" and not changed) or \
+                (not changed and self._t - self._plan_t < REPLAN_S):
+            return
+        if self.phase == "ATTACK" and self.axes:
+            return
+        axes = self._threat_axes(activity) or self.axes
+        if not axes:
+            return
+        if self.axes and not changed and all(
+                min(abs((a - b + 180) % 360 - 180) for b in self.axes) < 20 for a in axes) and len(axes) == len(self.axes):
+            self._plan_t = self._t
+            return                                   # same axes: keep the lines
+        self.axes, self._plan_t = axes, self._t
+        self._man_lines()
+
+    @staticmethod
+    def _threat_axes(activity: list[TrackView]) -> list[float]:
+        """Bearings of the activity clustered into at most two axes (largest first)."""
+        brgs = sorted(math.degrees(math.atan2(tv.x, tv.y)) % 360 for tv in activity)
+        if not brgs:
+            return []
+        clusters: list[list[float]] = [[brgs[0]]]
+        for b in brgs[1:]:
+            if b - clusters[-1][-1] <= _AXIS_CLUSTER_DEG:
+                clusters[-1].append(b)
+            else:
+                clusters.append([b])
+        if len(clusters) > 1 and clusters[0][0] + 360 - clusters[-1][-1] <= _AXIS_CLUSTER_DEG:
+            clusters[0] = clusters.pop() + [b + 360 for b in clusters[0]]
+        clusters.sort(key=len, reverse=True)
+        out = []
+        for c in clusters[:2]:
+            sx = sum(math.sin(math.radians(b)) for b in c)
+            sy = sum(math.cos(math.radians(b)) for b in c)
+            out.append(round(math.degrees(math.atan2(sx, sy)) % 360, 1))
+        return out
+
+    def _line_point(self, axis_deg: float, dist_m: float, slot: int, n: int) -> tuple[float, float]:
+        """Point dist_m out on the axis, slot k of n spread across it; inside the territory."""
+        a = math.radians(axis_deg)
+        off = (slot - (n - 1) / 2) * LINE_SPREAD_M
+        x = math.sin(a) * dist_m + math.cos(a) * off
+        y = math.cos(a) * dist_m - math.sin(a) * off
+        if self.territory is not None:
+            x, y = self.territory.pull_inside(x, y, (0.0, 0.0), 400.0)
+        return self.frame.to_latlon(x, y)
+
+    def _man_lines(self) -> None:
+        n_axes = len(self.axes)
+        free_uavs = [u for u in self.interceptors if u.assigned_track is None and u.available]
+        for i, u in enumerate(free_uavs):
+            k, slot = i % n_axes, i // n_axes
+            per_axis = len([j for j in range(len(free_uavs)) if j % n_axes == k])
+            u.launch_patrol(self._line_point(self.axes[k], UAV_LINE_M, slot, per_axis))
+        if free_uavs:
+            self._log("INFO", f"{len(free_uavs)} interceptor(s) to patrol orbits {UAV_LINE_M / 1000:.0f} km out, "
+                              f"axes {', '.join(f'{a:.0f}°' for a in self.axes)}")
+        free_ugvs = [g for g in self.jammers if g.assigned_track is None and not g.destroyed]
+        # each UGV to the axis whose blocking point is nearest to it
+        by_axis: dict[int, list] = {k: [] for k in range(n_axes)}
+        for g in free_ugvs:
+            gx, gy = self.frame.to_xy(g.position.lat, g.position.lon)
+            k = min(range(n_axes), key=lambda k: math.hypot(
+                gx - math.sin(math.radians(self.axes[k])) * UGV_LINE_M,
+                gy - math.cos(math.radians(self.axes[k])) * UGV_LINE_M))
+            by_axis[k].append(g)
+        for k, ugvs in by_axis.items():
+            for slot, g in enumerate(ugvs):
+                lat, lon = self._clamp_ground(*self._line_point(self.axes[k], UGV_LINE_M, slot, len(ugvs)))
+                if self.drivability is not None:
+                    near = self.drivability.nearest_drivable(lat, lon, 800)
+                    if near:
+                        lat, lon = near
+                g.station = (lat, lon)
+                if g.goal != g.station:
+                    g.navigate_to(lat, lon)
+        if free_ugvs:
+            self._log("INFO", f"{len(free_ugvs)} UGV(s) to blocking positions {UGV_LINE_M / 1000:.1f} km out")
+
+    def readiness_view(self) -> dict:
+        return {"phase": self.phase, "axes": list(self.axes), "alertRangeM": ALERT_RANGE_M,
+                "uavStations": [{"id": u.DEVICE_ID, "lat": u.station[0], "lon": u.station[1]}
+                                for u in self.interceptors if u.station],
+                "ugvStations": [{"id": g.DEVICE_ID, "lat": g.station[0], "lon": g.station[1]}
+                                for g in self.jammers if g.station and not g.destroyed]}
 
     # ── internals ─────────────────────────────────────────────────────────
 
@@ -475,8 +712,10 @@ class EngagementManager:
         if dev is None:
             return
         if eng.effector_kind == "INTERCEPTOR":
-            dev.return_to_base()
-            self._log("INFO", f"{dev.DEVICE_ID} returning to base")
+            if dev.expended:
+                return
+            dev.resume_station()
+            self._log("INFO", f"{dev.DEVICE_ID} " + ("back to its patrol station" if dev.station else "returning to base"))
         elif eng.effector_kind in ("JAMMER", "CHARGE"):
             dev.release()
 

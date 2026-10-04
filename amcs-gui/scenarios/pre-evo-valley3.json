@@ -7,7 +7,7 @@
     "lon": 21.615349008024907
   },
   "zone": {
-    "radius_m": 2450.0,
+    "radius_m": 1450.0,
     "buffer_m": 1500.0
   },
   "ground_bbox": [
@@ -154,12 +154,6 @@
   ],
   "seismic": [
     {
-      "id": "SEI-FIELD-01",
-      "lat": 42.270826755300035,
-      "lon": 21.569923607519808,
-      "label": "SEI-W"
-    },
-    {
       "id": "SEI-FIELD-02",
       "lat": 42.25555546532519,
       "lon": 21.60998713924802,
@@ -170,6 +164,24 @@
       "lat": 42.28519973409989,
       "lon": 21.65005067097623,
       "label": "SEI-E"
+    },
+    {
+      "id": "SEI-FIELD-05",
+      "lat": 42.26240476961541,
+      "lon": 21.58731050989428,
+      "label": "SEI-5"
+    },
+    {
+      "id": "SEI-FIELD-06",
+      "lat": 42.24327630605904,
+      "lon": 21.669283605551584,
+      "label": "SEI-6"
+    },
+    {
+      "id": "SEI-FIELD-07",
+      "lat": 42.29173501599158,
+      "lon": 21.572047619519992,
+      "label": "SEI-7"
     }
   ],
   "ugvs": [
@@ -351,7 +363,7 @@
     ],
     "rendezvous_timeout_s": 900.0,
     "escort_drones": 20,
-    "aviation": 2,
+    "aviation": 3,
     "escort_radius_m": 500.0,
     "release_dist_m": 2500.0
   },
