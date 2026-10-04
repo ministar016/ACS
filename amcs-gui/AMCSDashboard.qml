@@ -60,37 +60,114 @@ ApplicationWindow {
     }
 
     // ── Live simulation data ───────────────────────────────────────────
-    property var  uavData:      null
-    property var  ugvData:      null
+    property var  uavsData:     []
+    property var  ugvsData:     []
     property var  acousticData: []
     property var  seismicData:  []
     property var  trackData:    []
-    property var  targetData:   ({lat: 42.848, lon: 20.170, alive: true})
+    property var  laydownData:  null
     property int  threatLevel:  0
     property real simTime:      0.0
-    property bool missionAccepted: false
     property int  timeScale:       1
-    readonly property string mapCenterStr: "42.830°N / 20.295°E"
+    property var  zoneData:        null
+    property var  targetsData:     []
+    property var  engagementsData: []
+    property var  eventsData:      []
+    property var  linkData:        null
+    property bool autoRoe:         false
+    property bool showTruth:       true
+    property bool editMode:        false
+    property string editTool:      "ugv"
+    property var  editMsg:         null
+    property var  scenarioNames:   []
+    property var  drivData:        null
+    property var  pvoData:         null
+    property var  statsData:       ({kills: 0, baseHits: 0, assaults: 0})
+    property var  enemyRoute:      null
+    property var  detectionsData:  []
+    property bool showDrive:       false
+    function uavById(id) {
+        for (var i = 0; i < uavsData.length; i++) if (uavsData[i].deviceId === id) return uavsData[i]
+        return null
+    }
+    function convoyVehicles() { return laydownData && laydownData.convoy ? laydownData.convoy.vehicles : 0 }
+    function convoyEscorts()  { return laydownData && laydownData.convoy ? laydownData.convoy.escortDrones : 0 }
+    function convoyAviation() { return laydownData && laydownData.convoy ? laydownData.convoy.aviation : 0 }
+    function countAirborne() {
+        var n = 0
+        for (var i = 0; i < uavsData.length; i++) if (uavsData[i].airborne) n++
+        return n
+    }
 
-    // ── Mission prerequisites ─────────────────────────────────────
-    readonly property bool prereqTrack:      trackData.length > 0
-    readonly property bool prereqConfidence: trackData.length > 0 && trackData[0].confidence >= 0.5
-    readonly property bool prereqThreat:     threatLevel >= 2
-    readonly property bool prereqUav:        uavData !== null && uavData.batteryPct > 20
-                                             && uavData.status !== "ERROR"
-                                             && uavData.status !== "OFFLINE"
-    readonly property bool missionReady:     prereqTrack && prereqConfidence
-                                             && prereqThreat && prereqUav
+    // ── Kill-chain state derived from engagements ─────────────────
+    readonly property var pendingEng: {
+        for (var i = 0; i < engagementsData.length; i++)
+            if (engagementsData[i].state === "PROPOSED") return engagementsData[i]
+        return null
+    }
+    function countEng(state) {
+        var n = 0
+        for (var i = 0; i < engagementsData.length; i++)
+            if (engagementsData[i].state === state) n++
+        return n
+    }
+    function countIdentity(ident) {
+        var n = 0
+        for (var i = 0; i < trackData.length; i++)
+            if (trackData[i].identity === ident && trackData[i].engState !== "NEUTRALIZED") n++
+        return n
+    }
+    function trackColor(t) {
+        return t.engState === "NEUTRALIZED" ? "#9E9E9E" : identityColor(t.identity)
+    }
+    function identityColor(ident) {
+        return ident === "HOSTILE" ? "#F44336" : ident === "SUSPECT" ? "#FF9800" :
+               ident === "NEUTRAL" ? "#4FC3F7" : "#FFEB3B"
+    }
+    function engStateColor(st) {
+        return st === "PROPOSED" ? "#FFB300" : st === "APPROVED" ? "#FF9800" :
+               st === "ENGAGING" ? "#EF5350" : st === "NEUTRALIZED" ? "#66BB6A" :
+               st === "DENIED" ? "#90A4AE" : "#B0BEC5"
+    }
+    readonly property bool prereqTrack:    trackData.length > 0
+    readonly property bool prereqHostile:  countIdentity("HOSTILE") > 0
+    readonly property bool prereqPending:  pendingEng !== null
+    readonly property bool prereqEffector: pendingEng !== null && pendingEng.effector !== ""
+    readonly property bool missionReady:   prereqPending && prereqEffector
 
     Connections {
         target: simBus
-        function onUavUpdated(data)      { root.uavData = data;  root.simTime = data.timestamp }
-        function onUgvUpdated(data)      { root.ugvData = data }
+        function onTimeUpdated(t)        { root.simTime = t }
+        function onUavsUpdated(data)     { root.uavsData = data }
+        function onUgvsUpdated(data)     { root.ugvsData = data }
+        function onEditModeChanged(on)   { root.editMode = on; mapCanvas.requestPaint() }
+        function onEditResult(r)         { root.editMsg = r }
+        function onScenariosUpdated(n)   { root.scenarioNames = n }
+        function onDrivabilityUpdated(d) { root.drivData = d; mapCanvas.requestPaint() }
+        function onPvoUpdated(d)         { root.pvoData = d }
+        function onStatsUpdated(d)       { root.statsData = d }
+        function onEnemyRouteUpdated(d)  { root.enemyRoute = d }
+        function onDetectionsUpdated(d)  { root.detectionsData = d }
         function onAcousticUpdated(data) { root.acousticData = data }
         function onSeismicUpdated(data)  { root.seismicData  = data }
         function onTracksUpdated(data)   { root.trackData = data }
         function onThreatUpdated(level)  { root.threatLevel = level }
-        function onTargetUpdated(data)   { root.targetData = data; mapCanvas.requestPaint() }
+        function onTargetsUpdated(data)  { root.targetsData = data; mapCanvas.requestPaint() }
+        function onZoneUpdated(data)     { root.zoneData = data; mapCanvas.requestPaint() }
+        function onLaydownUpdated(data) {
+            var first = root.laydownData === null
+            root.laydownData = data
+            if (first) {
+                mapCanvas.mapCenterLat = data.mapCenter.lat
+                mapCanvas.mapCenterLon = data.mapCenter.lon
+                mapCanvas.tileZoom     = data.mapCenter.zoom
+            }
+            mapCanvas.requestPaint()
+        }
+        function onEngagementsUpdated(data) { root.engagementsData = data }
+        function onEventsUpdated(data)   { root.eventsData = data }
+        function onLinkUpdated(data)     { root.linkData = data }
+        function onAutoRoeChanged(on)    { root.autoRoe = on }
     }
 
 
@@ -201,71 +278,93 @@ ApplicationWindow {
                         // ── Vehicles ──────────────────────────────
                         SectionHeader { title: "AUTONOMOUS VEHICLES" }
 
-                        DeviceCard {
-                            name: "UAV-ALPHA-001"; role: "PVO DRONE"
-                            accentColor: root.c_uav
-                            statusText: root.uavData ? root.uavData.status : "DEPLOYED"
-                            statusColor: root.uavData && root.uavData.status === "DEPLOYED"
-                                         ? root.c_active : root.c_deploy
-                            battery:    root.uavData ? root.uavData.batteryPct : 78.5
-                            detail1: root.uavData ?
-                                ("Alt: " + root.uavData.altitudeM.toFixed(0) + " m  |  Hdg: " +
-                                 root.uavData.headingDeg.toFixed(0) + "°") :
-                                "Alt: 150 m  |  Hdg: 270°"
-                            detail2: root.uavData && root.uavData.radar && root.uavData.radar.detected ?
-                                ("● RADAR  " + root.uavData.radar.distanceM.toFixed(0) + " m  " +
-                                 (root.uavData.radar.velocity > 0 ? "↓" : "↑") +
-                                 Math.abs(root.uavData.radar.velocity).toFixed(1) + " m/s") :
-                                "Radar+Cam  |  Scanning…"
+                        Repeater {
+                            model: root.uavsData
+                            DeviceCard {
+                                name: modelData.deviceId
+                                role: "INTERCEPTOR  |  " + modelData.mode
+                                accentColor: root.c_uav
+                                statusText: modelData.airborne ? "AIRBORNE" : "IDLE @ BASE"
+                                statusColor: modelData.mode === "INTERCEPT" ? root.c_armed
+                                           : modelData.airborne ? root.c_deploy : root.c_standby
+                                battery: modelData.batteryPct
+                                detail1: modelData.airborne ?
+                                    ("Alt: " + modelData.altitudeM.toFixed(0) + " m  |  " +
+                                     (modelData.speedMs * 3.6).toFixed(0) + " km/h  |  Hdg " + modelData.headingDeg.toFixed(0) + "°")
+                                    : "On the pad, charging"
+                                detail2: modelData.assignedTrack ? "▶ INTERCEPT " + modelData.assignedTrack
+                                         : modelData.mode === "PATROL" ? "Patrol over base (on call)" : ""
+                                actionLabel: modelData.assignedTrack ? ""
+                                             : modelData.mode === "IDLE" ? "▲ LAUNCH"
+                                             : (modelData.mode === "PATROL" || modelData.mode === "LAUNCHING") ? "▼ RECALL" : ""
+                                onAction: modelData.mode === "IDLE" ? simBus.launchInterceptor(modelData.deviceId)
+                                                                    : simBus.recallInterceptor(modelData.deviceId)
+                            }
                         }
-                        DeviceCard {
-                            name: "UGV-BRAVO-002"; role: "GROUND INTERCEPT"
-                            accentColor: root.c_ugv
-                            statusText: root.ugvData ? root.ugvData.status : "DEPLOYING"
-                            statusColor: root.ugvData && root.ugvData.status === "DEPLOYED"
-                                         ? root.c_active : root.c_deploy
-                            battery:    root.ugvData ? root.ugvData.batteryPct : 92.3
-                            detail1: root.ugvData ?
-                                ("Spd: " + (root.ugvData.speedMs * 3.6).toFixed(0) + " km/h  |  " +
-                                 root.ugvData.terrainMode) :
-                                "Speed: 25 km/h  |  Rugged"
-                            detail2: root.ugvData && root.ugvData.radar && root.ugvData.radar.detected ?
-                                ("● RADAR  " + root.ugvData.radar.distanceM.toFixed(0) + " m  conf:" +
-                                 (root.ugvData.radar.confidence * 100).toFixed(0) + "%") :
-                                "Radar+Cam  |  Intercept ACT-001"
+                        Repeater {
+                            model: root.ugvsData
+                            DeviceCard {
+                                name: modelData.deviceId
+                                role: "JAMMER + CHARGES  |  " + (modelData.jamming ? "JAMMING " + modelData.assignedTrack
+                                      : modelData.assignedTrack ? (modelData.weapon === "CHARGE" ? "FIRE → " : "→ ") + modelData.assignedTrack
+                                      : "STANDBY")
+                                accentColor: root.c_ugv
+                                statusText: modelData.status
+                                statusColor: modelData.status === "DEPLOYED" ? root.c_active : root.c_deploy
+                                battery: modelData.batteryPct
+                                detail1: "Spd: " + modelData.speedKmh.toFixed(0) + " km/h  |  " + modelData.terrain +
+                                         "  |  charges " + modelData.charges + "/" + modelData.maxCharges
+                                detail2: "Route: " + modelData.routeSource
+                            }
                         }
 
                         // ── Air Defence ───────────────────────────
-                        SectionHeader { title: "AIR DEFENCE  (PVO x4)" }
+                        SectionHeader {
+                            title: "AIR DEFENCE  (PVO x" + (root.pvoData ? root.pvoData.sites.length : 0) + ")  —  " +
+                                   (root.pvoData && root.pvoData.enabled ? "AUTO" : "HOLD FIRE")
+                        }
 
-                        WeaponCard { sysId: "PVO-ALPHA-01"; position: "NW corner"
-                                     armed: true;  ammo: 8;  range: "SHORT" }
-                        WeaponCard { sysId: "PVO-ALPHA-02"; position: "NE corner"
-                                     armed: true;  ammo: 8;  range: "SHORT" }
-                        WeaponCard { sysId: "PVO-BETA-03";  position: "SW corner"
-                                     armed: false; ammo: 4;  range: "MEDIUM" }
-                        WeaponCard { sysId: "PVO-BETA-04";  position: "SE corner"
-                                     armed: false; ammo: 4;  range: "MEDIUM" }
+                        Repeater {
+                            model: root.pvoData ? root.pvoData.sites : []
+                            WeaponCard {
+                                sysId: modelData.id
+                                position: (modelData.ammo <= 0 ? "EMPTY" :
+                                           modelData.readyIn > 0 ? "reload " + modelData.readyIn.toFixed(0) + " s" : "READY") +
+                                          "  |  kills " + modelData.kills
+                                armed: root.pvoData.enabled && modelData.ammo > 0
+                                ammo: modelData.ammo
+                                range: (modelData.rangeM / 1000).toFixed(0) + " km"
+                            }
+                        }
 
-                        // ── Ground Systems ────────────────────────
-                        SectionHeader { title: "GROUND SYSTEMS  (GG x3)" }
+                        SectionHeader { title: "GROUND SYSTEMS  (GG x" + (root.laydownData ? root.laydownData.gg.length : 0) + ")" }
 
-                        WeaponCard { sysId: "GG-ZETA-01"; position: "South-W"
-                                     armed: true;  ammo: 12; range: "3 km" }
-                        WeaponCard { sysId: "GG-ZETA-02"; position: "South-C"
-                                     armed: true;  ammo: 12; range: "3 km" }
-                        WeaponCard { sysId: "GG-ZETA-03"; position: "South-E"
-                                     armed: false; ammo: 10; range: "3 km" }
+                        Repeater {
+                            model: root.laydownData ? root.laydownData.gg : []
+                            WeaponCard {
+                                sysId: modelData.id
+                                position: modelData.lat.toFixed(4) + "°N " + modelData.lon.toFixed(4) + "°E"
+                                armed: modelData.armed; ammo: 12; range: "3 km"
+                            }
+                        }
 
                         // ── Field Sensors ─────────────────────────
                         SectionHeader { title: "FIELD SENSORS" }
 
-                        SensorCard { sensorType: "ACOUSTIC"; count: "x3"
-                                     detail: "W / C / E  ~10 km apart"
-                                     conf: 0.93; accentColor: root.c_sensor }
-                        SensorCard { sensorType: "SEISMIC"; count: "x3"
-                                     detail: "Staggered between acoustic"
-                                     conf: 0.87; accentColor: root.c_warn }
+                        SensorCard { sensorType: "ACOUSTIC"
+                                     count: "x" + (root.laydownData ? root.laydownData.acoustic.length : 0)
+                                     detail: "Air 10 km / ground 2–3 km, bearing only"
+                                     conf: root.acousticData.length > 0 ? Math.max.apply(null, root.acousticData.map(function(a) { return a.confidence })) : 0
+                                     accentColor: root.c_sensor }
+                        SensorCard { sensorType: "SEISMIC"
+                                     count: "x" + (root.laydownData ? root.laydownData.seismic.length : 0)
+                                     detail: "Ground vehicles 5–10 km, bearing"
+                                     conf: root.seismicData.length > 0 ? Math.max.apply(null, root.seismicData.map(function(a) { return a.confidence })) : 0
+                                     accentColor: root.c_warn }
+                        SensorCard { sensorType: "RADAR"
+                                     count: "x" + (root.laydownData ? root.laydownData.radars.length : 0)
+                                     detail: "Air 30 km / ground (GMTI) 12 km"
+                                     conf: 1.0; accentColor: "#80CBC4" }
 
                         Item { height: 10 }
                     }
@@ -284,9 +383,41 @@ ApplicationWindow {
                     color: "transparent"
                     RowLayout {
                         anchors { fill: parent; leftMargin: 10; rightMargin: 10 }
-                        Text { text: "BATTLEFIELD MAP  —  ZONE-BRAVO  (30 × 3 km)"
+                        Text { text: "C-UAS MAP  —  " + (root.laydownData ? root.laydownData.name + "  —  " : "") +
+                                     (root.zoneData ? root.zoneData.zoneId + " / " + root.zoneData.asset.id : "")
                                color: root.c_dim; font { pixelSize: 10; family: "monospace" } }
                         Item { Layout.fillWidth: true }
+
+                        Text {
+                            visible: root.drivData !== null && (root.showDrive || root.drivData.status.indexOf("loading") === 0)
+                            text: root.drivData ? "drivability: " + root.drivData.status : ""
+                            color: root.drivData && root.drivData.ready ? root.c_active : root.c_warn
+                            font { pixelSize: 9; family: "monospace" }
+                            Layout.maximumWidth: 360; elide: Text.ElideRight
+                        }
+                        Rectangle {
+                            width: 50; height: 18; radius: 3
+                            color: root.showTruth ? "#6D4C41" : "#1E3550"
+                            border.color: root.showTruth ? "#BCAAA4" : "#2E4560"
+                            Text { anchors.centerIn: parent; text: "TRUTH"
+                                   color: "#FFFFFF"; font { pixelSize: 9; bold: true } }
+                            TapHandler { onTapped: { root.showTruth = !root.showTruth; mapCanvas.requestPaint() } }
+                        }
+                        Rectangle {
+                            width: 50; height: 18; radius: 3
+                            color: root.showDrive ? "#2E7D32" : "#1E3550"
+                            border.color: root.showDrive ? "#66BB6A" : "#2E4560"
+                            Text { anchors.centerIn: parent; text: "DRIVE"
+                                   color: "#FFFFFF"; font { pixelSize: 9; bold: true } }
+                            TapHandler {
+                                onTapped: {
+                                    root.showDrive = !root.showDrive
+                                    if (root.showDrive && (!root.drivData || !root.drivData.ready))
+                                        simBus.loadDrivability(false)
+                                    mapCanvas.requestPaint()
+                                }
+                            }
+                        }
 
                         // Map type toggle buttons
                         Repeater {
@@ -314,13 +445,125 @@ ApplicationWindow {
                     }
                 }
 
+                // ── Scenario editor toolbar (edit mode) ───────────────
+                Rectangle {
+                    id: editBar
+                    visible: root.editMode
+                    z: 20
+                    anchors { left: parent.left; right: parent.right; bottom: parent.bottom; margins: 8 }
+                    height: 96; radius: 5
+                    color: "#E60D1B2A"; border.color: root.c_deploy; border.width: 1
+
+                    ColumnLayout {
+                        anchors { fill: parent; margins: 8 }
+                        spacing: 5
+                        RowLayout {
+                            spacing: 4
+                            Text { text: "✎ EDIT"; color: root.c_deploy; font { bold: true; pixelSize: 11 } }
+                            Repeater {
+                                model: [
+                                    { key: "move",     label: "✥ MOVE" },
+                                    { key: "base",     label: "◆ BASE" },
+                                    { key: "ugv",      label: "▣ UGV" },
+                                    { key: "pvo",      label: "◈ PVO" },
+                                    { key: "gg",       label: "▼ GG" },
+                                    { key: "radar",    label: "▲ RADAR" },
+                                    { key: "acoustic", label: "◉ ACOUSTIC" },
+                                    { key: "seismic",  label: "≈ SEISMIC" },
+                                    { key: "delete",   label: "✘ DELETE" },
+                                ]
+                                ActionButton {
+                                    width: 72; height: 22
+                                    label: modelData.label
+                                    base: root.editTool === modelData.key ? "#1976D2" : "#1E3550"
+                                    edge: root.editTool === modelData.key ? "#90CAF9" : "#2E4560"
+                                    onClicked: {
+                                        if (root.editTool === "move" && modelData.key !== "move") simBus.cancelMove()
+                                        root.editTool = modelData.key
+                                        mapCanvas.requestPaint()
+                                    }
+                                }
+                            }
+                            Item { Layout.fillWidth: true }
+                            ActionButton { width: 70; height: 22; label: "▶ RUN"; base: "#2E7D32"; edge: "#66BB6A"
+                                           onClicked: simBus.setEditMode(false) }
+                        }
+                        RowLayout {
+                            spacing: 6
+                            Text { text: "Zone"; color: root.c_dim; font.pixelSize: 10 }
+                            ActionButton { width: 22; height: 22; label: "−"; base: "#1E3550"; edge: "#2E4560"
+                                           onClicked: simBus.setZoneRadius(root.laydownData.zoneRadiusM - 250) }
+                            Text { text: root.laydownData ? (root.laydownData.zoneRadiusM / 1000).toFixed(2) + " km" : ""
+                                   color: root.c_text; font { pixelSize: 10; bold: true } }
+                            ActionButton { width: 22; height: 22; label: "+"; base: "#1E3550"; edge: "#2E4560"
+                                           onClicked: simBus.setZoneRadius(root.laydownData.zoneRadiusM + 250) }
+                            Rectangle { width: 1; height: 20; color: root.c_border }
+                            Text { text: "Interceptors"; color: root.c_dim; font.pixelSize: 10 }
+                            ActionButton { width: 22; height: 22; label: "−"; base: "#1E3550"; edge: "#2E4560"
+                                           onClicked: simBus.setInterceptors(root.laydownData.interceptors - 1) }
+                            Text { text: root.laydownData ? root.laydownData.interceptors : ""
+                                   color: root.c_text; font { pixelSize: 10; bold: true } }
+                            ActionButton { width: 22; height: 22; label: "+"; base: "#1E3550"; edge: "#2E4560"
+                                           onClicked: simBus.setInterceptors(root.laydownData.interceptors + 1) }
+                            Rectangle { width: 1; height: 20; color: root.c_border }
+                            Text { text: "Trucks"; color: root.c_dim; font.pixelSize: 10 }
+                            ActionButton { width: 20; height: 22; label: "−"; base: "#1E3550"; edge: "#2E4560"
+                                           onClicked: simBus.setConvoy(root.convoyVehicles() - 1, root.convoyEscorts(), root.convoyAviation()) }
+                            Text { text: root.convoyVehicles(); color: "#FF8A80"; font { pixelSize: 10; bold: true } }
+                            ActionButton { width: 20; height: 22; label: "+"; base: "#1E3550"; edge: "#2E4560"
+                                           onClicked: simBus.setConvoy(root.convoyVehicles() + 1, root.convoyEscorts(), root.convoyAviation()) }
+                            Text { text: "UAV"; color: root.c_dim; font.pixelSize: 10 }
+                            ActionButton { width: 20; height: 22; label: "−"; base: "#1E3550"; edge: "#2E4560"
+                                           onClicked: simBus.setConvoy(root.convoyVehicles(), root.convoyEscorts() - 5, root.convoyAviation()) }
+                            Text { text: root.convoyEscorts(); color: "#FF8A80"; font { pixelSize: 10; bold: true } }
+                            ActionButton { width: 20; height: 22; label: "+"; base: "#1E3550"; edge: "#2E4560"
+                                           onClicked: simBus.setConvoy(root.convoyVehicles(), root.convoyEscorts() + 5, root.convoyAviation()) }
+                            Text { text: "Helo"; color: root.c_dim; font.pixelSize: 10 }
+                            ActionButton { width: 20; height: 22; label: "−"; base: "#1E3550"; edge: "#2E4560"
+                                           onClicked: simBus.setConvoy(root.convoyVehicles(), root.convoyEscorts(), root.convoyAviation() - 1) }
+                            Text { text: root.convoyAviation(); color: "#FF8A80"; font { pixelSize: 10; bold: true } }
+                            ActionButton { width: 20; height: 22; label: "+"; base: "#1E3550"; edge: "#2E4560"
+                                           onClicked: simBus.setConvoy(root.convoyVehicles(), root.convoyEscorts(), root.convoyAviation() + 1) }
+                            Rectangle { width: 1; height: 20; color: root.c_border }
+                            TextField {
+                                id: scenarioName
+                                Layout.preferredWidth: 110; implicitHeight: 24
+                                placeholderText: "scenario name"
+                                text: root.laydownData ? root.laydownData.name : ""
+                                font.pixelSize: 10; color: root.c_text
+                                background: Rectangle { color: "#0F2133"; border.color: root.c_border; radius: 3 }
+                            }
+                            ActionButton { width: 64; height: 22; label: "💾 SAVE"; base: "#1565C0"; edge: "#42A5F5"
+                                           onClicked: simBus.saveScenario(scenarioName.text) }
+                            ComboBox {
+                                id: scenarioPick
+                                Layout.fillWidth: true; implicitHeight: 24
+                                model: root.scenarioNames
+                                font.pixelSize: 10
+                            }
+                            ActionButton { width: 64; height: 22; label: "📂 LOAD"; base: "#1565C0"; edge: "#42A5F5"
+                                           onClicked: if (scenarioPick.currentText) simBus.loadScenario(scenarioPick.currentText) }
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                            text: root.editMsg ? root.editMsg.message
+                                  : (root.editTool === "move" ? "MOVE: click an item to pick it, then click its new position."
+                                     : "Click on the map to place the selected item. UGVs only on drivable terrain inside the artemides area.")
+                            color: root.editMsg ? (root.editMsg.ok ? root.c_active : "#FF8A80") : root.c_dim
+                            font.pixelSize: 10
+                        }
+                    }
+                }
+
                 Canvas {
+                    objectName: "mapCanvas"
                     id: mapCanvas
                     anchors { fill: parent; topMargin: 28 }
 
                     // ── Map tile configuration ────────────────────────
-                    property real   mapCenterLat: 42.833
-                    property real   mapCenterLon: 20.295
+                    property real   mapCenterLat: 42.27442     // replaced by laydown on start
+                    property real   mapCenterLon: 21.606345
                     property int    tileZoom:     12      // wider view: ~28 m/px at this lat
                     property int    tileSize:     256
                     property string mapType:      "satellite"  // satellite | topo | osm
@@ -383,6 +626,16 @@ ApplicationWindow {
 
                             mapCanvas.requestPaint()
                             event.accepted = true
+                        }
+                    }
+
+                    // ── Editor: click places the selected item ───────
+                    TapHandler {
+                        enabled: root.editMode
+                        onTapped: function(eventPoint, button) {
+                            simBus.editPlace(root.editTool,
+                                             mapCanvas.yToLat(eventPoint.position.y),
+                                             mapCanvas.xToLon(eventPoint.position.x))
                         }
                     }
 
@@ -451,20 +704,6 @@ ApplicationWindow {
                                     loadImage(url)
                             }
                         }
-                    }
-
-                    // ── Tactical overlay: corridor boundary ───────────
-                    function drawCorridor(ctx) {
-                        var x0 = lonToX(20.166), y0 = latToY(42.843)
-                        var x1 = lonToX(20.534), y1 = latToY(42.817)
-                        ctx.fillStyle = "rgba(36, 113, 163, 0.07)"
-                        ctx.fillRect(x0, y0, x1-x0, y1-y0)
-                        ctx.setLineDash([8, 4])
-                        ctx.strokeStyle = "rgba(100, 180, 255, 0.85)"
-                        ctx.lineWidth = 2
-                        ctx.strokeRect(x0, y0, x1-x0, y1-y0)
-                        ctx.setLineDash([])
-                        lbl(ctx, "ZONE-BRAVO", x0+8, y0+14, "#90CAF9")
                     }
 
                     function drawUAV(ctx, lat, lon, label) {
@@ -738,25 +977,297 @@ ApplicationWindow {
                         ctx.closePath(); ctx.fill()
                     }
 
+                    // ── C-UAS overlays ────────────────────────────────
+                    function metresToPx(lat, m) {
+                        var lon2 = mapCenterLon + m / (111320 * Math.cos(lat * Math.PI / 180))
+                        return lonToX(lon2) - lonToX(mapCenterLon)
+                    }
+
+                    function drawZone(ctx) {
+                        var z = root.zoneData
+                        if (!z) return
+                        var a = z.asset
+                        var ax = lonToX(a.lon), ay = latToY(a.lat)
+                        // Warning buffer (approximate ring)
+                        var rBuf = metresToPx(a.lat, 2200 + z.bufferM)
+                        ctx.setLineDash([6, 5])
+                        ctx.strokeStyle = "rgba(255,183,77,0.8)"; ctx.lineWidth = 1.2
+                        ctx.beginPath(); ctx.arc(ax, ay, rBuf, 0, Math.PI*2); ctx.stroke()
+                        ctx.setLineDash([])
+                        // Restricted zone polygon
+                        var v = z.vertices
+                        ctx.beginPath()
+                        ctx.moveTo(lonToX(v[0].lon), latToY(v[0].lat))
+                        for (var i = 1; i < v.length; i++) ctx.lineTo(lonToX(v[i].lon), latToY(v[i].lat))
+                        ctx.closePath()
+                        var breach = false
+                        for (var t = 0; t < root.trackData.length; t++)
+                            if (root.trackData[t].insideZone && root.trackData[t].identity === "HOSTILE"
+                                    && root.trackData[t].engState !== "NEUTRALIZED") breach = true
+                        ctx.fillStyle = breach ? (root.pulsePhase ? "rgba(244,67,54,0.22)" : "rgba(244,67,54,0.12)")
+                                               : "rgba(239,83,80,0.10)"
+                        ctx.fill()
+                        ctx.strokeStyle = "#EF5350"; ctx.lineWidth = 2; ctx.stroke()
+                        lbl(ctx, z.zoneId + (breach ? "  ■ BREACH" : "  RESTRICTED"),
+                            lonToX(v[0].lon) + 6, latToY(v[0].lat) - 6, breach ? "#FF5252" : "#EF9A9A")
+                        // Protected asset
+                        ctx.fillStyle = "#FFD54F"; ctx.strokeStyle = "#000000"; ctx.lineWidth = 1
+                        ctx.beginPath()
+                        ctx.moveTo(ax, ay-8); ctx.lineTo(ax+7, ay); ctx.lineTo(ax, ay+8); ctx.lineTo(ax-7, ay)
+                        ctx.closePath(); ctx.fill(); ctx.stroke()
+                        lbl(ctx, a.id, ax + 10, ay + 4, "#FFD54F")
+                    }
+
+                    function drawGroundArea(ctx, bb) {
+                        if (!bb) return
+                        var x0 = lonToX(bb.lonMin), y0 = latToY(bb.latMax)
+                        var x1 = lonToX(bb.lonMax), y1 = latToY(bb.latMin)
+                        ctx.setLineDash([3, 4])
+                        ctx.strokeStyle = "rgba(165,214,167,0.55)"; ctx.lineWidth = 1
+                        ctx.strokeRect(x0, y0, x1 - x0, y1 - y0)
+                        ctx.setLineDash([])
+                        lbl(ctx, "artemides-trax terrain (UGV routable)", x0 + 6, y1 - 6, "#A5D6A7")
+                    }
+
+                    // Sensor coverage: radar 30 km / acoustic 10 km rings (full detail in edit mode)
+                    function drawCoverage(ctx) {
+                        var ld = root.laydownData
+                        if (!ld) return
+                        for (var i = 0; i < ld.radars.length; i++) {
+                            var r = ld.radars[i]
+                            var x = lonToX(r.lon), y = latToY(r.lat)
+                            ctx.setLineDash([2, 6])
+                            ctx.strokeStyle = "rgba(128,203,196," + (root.editMode ? "0.8" : "0.4") + ")"; ctx.lineWidth = 1
+                            ctx.beginPath(); ctx.arc(x, y, metresToPx(r.lat, r.rangeM), 0, Math.PI*2); ctx.stroke()
+                            ctx.setLineDash([])
+                            ctx.fillStyle = "#80CBC4"
+                            ctx.beginPath(); ctx.moveTo(x, y-7); ctx.lineTo(x+6, y+5); ctx.lineTo(x-6, y+5); ctx.closePath(); ctx.fill()
+                            lbl(ctx, r.label + "  30 km", x + 8, y + 12, "#80CBC4")
+                        }
+                        if (!root.editMode) return
+                        // Edit mode: acoustic 10 km (air) + 2.5 km (ground), seismic ~8 km (ground)
+                        for (var k = 0; k < ld.acoustic.length; k++) {
+                            var a = ld.acoustic[k]
+                            var ax = lonToX(a.lon), ay = latToY(a.lat)
+                            ctx.setLineDash([3, 6])
+                            ctx.strokeStyle = "rgba(255,249,196,0.30)"; ctx.lineWidth = 1
+                            ctx.beginPath(); ctx.arc(ax, ay, metresToPx(a.lat, a.rangeM), 0, Math.PI*2); ctx.stroke()
+                            ctx.setLineDash([1, 3])
+                            ctx.strokeStyle = "rgba(255,249,196,0.55)"
+                            ctx.beginPath(); ctx.arc(ax, ay, metresToPx(a.lat, a.groundRangeM), 0, Math.PI*2); ctx.stroke()
+                        }
+                        for (var q = 0; q < ld.seismic.length; q++) {
+                            var sq = ld.seismic[q]
+                            ctx.setLineDash([6, 6])
+                            ctx.strokeStyle = "rgba(255,152,0,0.35)"; ctx.lineWidth = 1
+                            ctx.beginPath(); ctx.arc(lonToX(sq.lon), latToY(sq.lat), metresToPx(sq.lat, sq.rangeM), 0, Math.PI*2); ctx.stroke()
+                        }
+                        ctx.setLineDash([])
+                    }
+
+                    // Translucent detection sectors (15° per bearing, merged per sensor),
+                    // fading with range.  One sensor alone is barely visible; the target
+                    // stands out only where the sectors of several sensors overlap.
+                    function drawDetections(ctx) {
+                        var dets = root.detectionsData
+                        for (var i = 0; i < dets.length; i++) {
+                            var d = dets[i]
+                            var x = lonToX(d.lon), y = latToY(d.lat)
+                            var r = metresToPx(d.lat, d.rangeM)
+                            var a0 = (d.fromDeg - 90) * Math.PI / 180      // compass → canvas angle
+                            var a1 = (d.toDeg - 90) * Math.PI / 180
+                            var g = ctx.createRadialGradient(x, y, 0, x, y, r)
+                            if (d.kind === "SEISMIC") {
+                                g.addColorStop(0.0, "rgba(255,152,0,0.10)")
+                                g.addColorStop(1.0, "rgba(255,152,0,0.015)")
+                            } else {
+                                g.addColorStop(0.0, "rgba(255,241,118,0.08)")
+                                g.addColorStop(1.0, "rgba(255,241,118,0.01)")
+                            }
+                            ctx.fillStyle = g
+                            ctx.beginPath(); ctx.moveTo(x, y); ctx.arc(x, y, r, a0, a1); ctx.closePath()
+                            ctx.fill()
+                        }
+                    }
+
+                    function drawDrivability(ctx) {
+                        var d = root.drivData
+                        if (!d || !d.ready || !d.url) return
+                        if (!isImageLoaded(d.url)) { loadImage(d.url); return }
+                        var x0 = lonToX(d.bbox.lonMin), y0 = latToY(d.bbox.latMax)
+                        var x1 = lonToX(d.bbox.lonMax), y1 = latToY(d.bbox.latMin)
+                        ctx.drawImage(d.url, x0, y0, x1 - x0, y1 - y0)
+                    }
+
+                    function drawDriveLegend(ctx) {
+                        var d = root.drivData
+                        if (!d || !d.ready) return
+                        var lx = 12, ly = 14, sp = 15, h = (d.legend.length + 2) * sp + 6
+                        ctx.fillStyle = "rgba(13,27,42,0.85)"; ctx.fillRect(lx - 6, ly - 10, 150, h)
+                        ctx.font = "bold 9px sans-serif"; ctx.fillStyle = "#7899AA"
+                        ctx.fillText("UGV DRIVABILITY", lx, ly + 2)
+                        for (var i = 0; i < d.legend.length; i++) {
+                            var it = d.legend[i]
+                            ctx.fillStyle = it.color; ctx.fillRect(lx, ly + (i+1)*sp - 6, 12, 9)
+                            ctx.fillStyle = "#C8D8E4"
+                            ctx.fillText(it.label + (it.kmh > 0 ? "  " + it.kmh + " km/h" : "  impassable"), lx + 18, ly + (i+1)*sp + 2)
+                        }
+                        ctx.fillStyle = "#90A4AE"
+                        ctx.fillText("no data  " + d.unknownKmh + " km/h", lx + 18, ly + (d.legend.length+1)*sp + 2)
+                    }
+
+                    function drawTrack(ctx, t) {
+                        var x = lonToX(t.lon), y = latToY(t.lat)
+                        var col = root.trackColor(t)
+                        // 1σ uncertainty ellipse (circular approx.)
+                        var rs = Math.max(3, metresToPx(t.lat, t.sigmaM))
+                        ctx.strokeStyle = col; ctx.globalAlpha = 0.35; ctx.lineWidth = 1
+                        ctx.beginPath(); ctx.arc(x, y, rs, 0, Math.PI*2); ctx.stroke()
+                        ctx.globalAlpha = 1.0
+                        // 60 s velocity leader
+                        var p = _geoMove(t.lat, t.lon, t.headingDeg, t.speedMs * 60)
+                        ctx.strokeStyle = col; ctx.lineWidth = 1.5
+                        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(lonToX(p.lon), latToY(p.lat)); ctx.stroke()
+                        // NATO-style track symbol: hostile = diamond, others = square;
+                        // ground tracks get a filled base bar
+                        ctx.lineWidth = 2
+                        if (t.domain === "GROUND") {
+                            drawTruck(ctx, x, y, col, true)
+                        } else {
+                            ctx.beginPath()
+                            if (t.identity === "HOSTILE" || t.identity === "SUSPECT") {
+                                ctx.moveTo(x, y-8); ctx.lineTo(x+8, y); ctx.lineTo(x, y+8); ctx.lineTo(x-8, y); ctx.closePath()
+                            } else {
+                                ctx.rect(x-6, y-6, 12, 12)
+                            }
+                            ctx.stroke()
+                            if (t.objClass === "ATTACK_HELICOPTER") {
+                                ctx.fillStyle = col; ctx.font = "bold 9px sans-serif"; ctx.fillText("H", x - 3, y + 3)
+                            }
+                        }
+                        if (t.engState === "ENGAGING") {
+                            ctx.strokeStyle = root.pulsePhase ? "#FF1744" : "#FF8A80"
+                            ctx.beginPath(); ctx.arc(x, y, 14, 0, Math.PI*2); ctx.stroke()
+                        }
+                        lbl(ctx, t.trackId + "  " + (t.speedMs*3.6).toFixed(0) + " km/h  " +
+                                 (t.domain === "GROUND" ? "TRUCK/UGV" :
+                                  (t.objClass === "ATTACK_HELICOPTER" ? "HELO " : "") + t.altitudeM.toFixed(0) + " m"),
+                            x + 12, y - 6, col)
+                        lbl(ctx, t.identity + (t.engState ? "  " + t.engState : ""), x + 12, y + 6, col)
+                    }
+
+                    function drawTruth(ctx, g) {
+                        var x = lonToX(g.lon), y = latToY(g.lat)
+                        var dead = g.state === "DESTROYED" || g.state === "LANDED" || g.state === "DISABLED"
+                        ctx.strokeStyle = dead ? "#9E9E9E" : "rgba(255,255,255,0.7)"; ctx.lineWidth = 1
+                        if (g.domain === "GROUND") {
+                            drawTruck(ctx, x, y, dead ? "#9E9E9E" : "rgba(255,255,255,0.8)", false)
+                        } else if (g.cls === "ATTACK_HELICOPTER") {
+                            ctx.font = "bold 10px sans-serif"; ctx.fillStyle = dead ? "#9E9E9E" : "rgba(255,255,255,0.85)"
+                            ctx.fillText("H", x - 3, y + 4)
+                        } else {
+                            ctx.beginPath(); ctx.moveTo(x-4,y-4); ctx.lineTo(x+4,y+4); ctx.stroke()
+                            ctx.beginPath(); ctx.moveTo(x+4,y-4); ctx.lineTo(x-4,y+4); ctx.stroke()
+                        }
+                        // Destroyed wrecks stay as grey markers only — labels are for outcomes that matter
+                        if (g.state === "IMPACT" || g.state === "ARRIVED")
+                            lbl(ctx, g.id + " " + g.state, x + 6, y + 16, "#FF5252")
+                        else if (g.state === "JAMMED")
+                            lbl(ctx, g.id + " JAMMED", x + 6, y + 16, "#BDBDBD")
+                    }
+
+                    // Truck glyph: box body, cab and two wheels (ground vehicles)
+                    function drawTruck(ctx, x, y, color, big) {
+                        var s = big ? 1.0 : 0.6
+                        ctx.fillStyle = color; ctx.strokeStyle = "#000000"; ctx.lineWidth = 1
+                        ctx.fillRect(x - 9*s, y - 5*s, 11*s, 8*s)          // cargo box
+                        ctx.fillRect(x + 3*s, y - 2*s, 6*s, 5*s)           // cab
+                        ctx.strokeRect(x - 9*s, y - 5*s, 11*s, 8*s)
+                        ctx.beginPath(); ctx.arc(x - 5*s, y + 4*s, 2*s, 0, Math.PI*2); ctx.fill(); ctx.stroke()
+                        ctx.beginPath(); ctx.arc(x + 5*s, y + 4*s, 2*s, 0, Math.PI*2); ctx.fill(); ctx.stroke()
+                    }
+
+                    // Enemy convoy's planned road route — ground truth, never shown to the C2 picture
+                    function drawEnemyRoute(ctx) {
+                        var r = root.enemyRoute
+                        if (!r || r.route.length < 2) return
+                        ctx.setLineDash([2, 4]); ctx.strokeStyle = "rgba(255,82,82,0.7)"; ctx.lineWidth = 1.5
+                        ctx.beginPath(); ctx.moveTo(lonToX(r.route[0].lon), latToY(r.route[0].lat))
+                        for (var i = 1; i < r.route.length; i++) ctx.lineTo(lonToX(r.route[i].lon), latToY(r.route[i].lat))
+                        ctx.stroke(); ctx.setLineDash([])
+                        var e = r.route[r.route.length - 1]
+                        lbl(ctx, "ENEMY ROUTE (truth) — " + r.source, lonToX(e.lon) + 6, latToY(e.lat) + 20, "#FF8A80")
+                    }
+
+                    function drawPvoSite(ctx, p) {
+                        var x = lonToX(p.lon), y = latToY(p.lat)
+                        var live = root.pvoData.enabled && p.ammo > 0
+                        ctx.setLineDash([4, 6])
+                        ctx.strokeStyle = live ? "rgba(239,154,154,0.45)" : "rgba(120,144,156,0.3)"; ctx.lineWidth = 1
+                        ctx.beginPath(); ctx.arc(x, y, metresToPx(p.lat, p.rangeM), 0, Math.PI*2); ctx.stroke()
+                        ctx.setLineDash([])
+                        drawPVO(ctx, p.lat, p.lon, p.id + "  " + p.ammo + (p.readyIn > 0 ? "  ⟳" + p.readyIn.toFixed(0) + "s" : ""), live)
+                        if (p.lastShot) drawShot(ctx, p.lat, p.lon, p.lastShot, "#FF9800")
+                    }
+
+                    // Flash a firing line for a few seconds after a shot
+                    function drawShot(ctx, lat, lon, shot, color) {
+                        var age = root.simTime - shot.t
+                        if (age < 0 || age > 4) return
+                        var x0 = lonToX(lon), y0 = latToY(lat), x1 = lonToX(shot.lon), y1 = latToY(shot.lat)
+                        ctx.globalAlpha = 1.0 - age / 4
+                        ctx.strokeStyle = color; ctx.lineWidth = 2
+                        ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke()
+                        ctx.fillStyle = shot.hit ? "#FF5252" : "#B0BEC5"
+                        ctx.beginPath(); ctx.arc(x1, y1, shot.hit ? 9 : 5, 0, Math.PI*2); ctx.fill()
+                        ctx.globalAlpha = 1.0
+                        lbl(ctx, shot.hit ? "HIT" : "MISS", x1 + 8, y1 - 8, shot.hit ? "#FF5252" : "#B0BEC5")
+                    }
+
+                    function drawJamBeam(ctx, lat, lon, aimLat, aimLon) {
+                        var x = lonToX(lon), y = latToY(lat)
+                        var r = metresToPx(lat, 2000)
+                        var ang = Math.atan2(latToY(aimLat) - y, lonToX(aimLon) - x)
+                        var half = 30 * Math.PI / 180
+                        ctx.fillStyle = root.pulsePhase ? "rgba(206,147,216,0.30)" : "rgba(206,147,216,0.18)"
+                        ctx.beginPath(); ctx.moveTo(x, y); ctx.arc(x, y, r, ang - half, ang + half); ctx.closePath()
+                        ctx.fill()
+                        ctx.strokeStyle = "#CE93D8"; ctx.lineWidth = 1; ctx.stroke()
+                        lbl(ctx, "RF JAM", x + Math.cos(ang) * r * 0.6, y + Math.sin(ang) * r * 0.6, "#E1BEE7")
+                    }
+
+                    function drawRoute(ctx, lat, lon, route) {
+                        if (!route || route.length === 0) return
+                        ctx.setLineDash([4, 3])
+                        ctx.strokeStyle = "#A5D6A7"; ctx.lineWidth = 2
+                        ctx.beginPath(); ctx.moveTo(lonToX(lon), latToY(lat))
+                        for (var i = 0; i < route.length; i++) ctx.lineTo(lonToX(route[i].lon), latToY(route[i].lat))
+                        ctx.stroke(); ctx.setLineDash([])
+                        var last = route[route.length - 1]
+                        ctx.fillStyle = "#A5D6A7"
+                        ctx.beginPath(); ctx.arc(lonToX(last.lon), latToY(last.lat), 3, 0, Math.PI*2); ctx.fill()
+                    }
+
                     function drawLegend(ctx) {
                         var lx = width - 160, ly = 16, ls = 16, sp = 18
                         ctx.fillStyle = "rgba(13,27,42,0.85)"
-                        ctx.fillRect(lx-8, ly-8, 158, 10*sp+8)
+                        ctx.fillRect(lx-8, ly-8, 158, 11*sp+8)
                         ctx.strokeStyle = "#2471A3"; ctx.lineWidth = 1
-                        ctx.strokeRect(lx-8, ly-8, 158, 10*sp+8)
+                        ctx.strokeRect(lx-8, ly-8, 158, 11*sp+8)
                         ctx.font = "bold 9px sans-serif"
                         ctx.fillStyle = "#7899AA"; ctx.fillText("LEGEND", lx, ly+3)
                         ly += sp
                         var items = [
-                            ["UAV (PVO drone)",    "#C8E6C9"],
-                            ["UGV (intercept)",    "#A5D6A7"],
+                            ["UAV interceptor",    "#C8E6C9"],
+                            ["UGV RF jammer",      "#A5D6A7"],
+                            ["Track HOSTILE",      "#F44336"],
+                            ["Track SUSPECT",      "#FF9800"],
+                            ["Track NEUTRAL",      "#4FC3F7"],
+                            ["Protected asset",    "#FFD54F"],
                             ["Acoustic sensor",    "#FFF9C4"],
-                            ["Seismic sensor",     "#FFE082"],
-                            ["PVO sys (ARMED)",    "#EF9A9A"],
-                            ["PVO sys (STANDBY)",  "#546E7A"],
-                            ["GG sys (ARMED)",     "#CE93D8"],
-                            ["Target (ground truth)", "#F44336"],
-                            ["Fused track est.",   "#FF9800"]
+                            ["PVO site / range",   "#EF9A9A"],
+                            ["Truck/UGV (ground)", "#F44336"],
+                            ["Intercept point",    "#FF9800"]
                         ]
                         for (var i = 0; i < items.length; i++) {
                             ctx.beginPath(); ctx.arc(lx+6, ly, 5, 0, Math.PI*2)
@@ -799,61 +1310,97 @@ ApplicationWindow {
                         ctx.fillRect(0, 0, width, height)
 
                         drawTiles(ctx)
-                        drawCorridor(ctx)
+                        if (root.showDrive || (root.editMode && root.editTool === "ugv"))
+                            drawDrivability(ctx)
+                        drawCoverage(ctx)
+                        drawZone(ctx)
 
-                        // Acoustic — highlight + bearing line when detecting
-                        var aco = root.acousticData
-                        var acoPos = [[42.824,20.195],[42.833,20.350],[42.821,20.500]]
-                        for (var ai = 0; ai < 3; ai++) {
-                            var adet = aco.length > ai && aco[ai].detected
-                            drawAcoustic(ctx, acoPos[ai][0], acoPos[ai][1],
-                                         ["ACO-W","ACO-C","ACO-E"][ai], adet)
-                            if (adet && aco[ai].bearing !== undefined)
-                                drawAcousticBearing(ctx, acoPos[ai][0], acoPos[ai][1], aco[ai].bearing)
+                        var ld = root.laydownData
+                        if (ld) {
+                            drawGroundArea(ctx, ld.groundBbox)
+
+                            // Bearing detections: faint 15° wedges — only where several
+                            // sensors agree does the overlap stand out
+                            drawDetections(ctx)
+
+                            // Acoustic — highlight when detecting
+                            var aco = root.acousticData
+                            for (var ai = 0; ai < ld.acoustic.length; ai++) {
+                                var as = ld.acoustic[ai]
+                                drawAcoustic(ctx, as.lat, as.lon, as.label, aco.length > ai && aco[ai].detected)
+                            }
+
+                            // Seismic — highlight when actively detecting
+                            var sei = root.seismicData
+                            for (var si = 0; si < ld.seismic.length; si++)
+                                drawSeismic(ctx, ld.seismic[si].lat, ld.seismic[si].lon, ld.seismic[si].label,
+                                            sei.length > si && sei[si].detected)
+
+                            // PVO / GG systems (fixed)
+                            if (root.pvoData)
+                                for (var pi = 0; pi < root.pvoData.sites.length; pi++)
+                                    drawPvoSite(ctx, root.pvoData.sites[pi])
+                            for (var gi2 = 0; gi2 < ld.gg.length; gi2++)
+                                drawGG(ctx, ld.gg[gi2].lat, ld.gg[gi2].lon, ld.gg[gi2].label, ld.gg[gi2].armed)
                         }
 
-                        // Seismic — highlight when actively detecting
-                        var sei = root.seismicData
-                        drawSeismic(ctx, 42.831, 20.225, "SEI-W", sei.length>0 && sei[0].detected)
-                        drawSeismic(ctx, 42.818, 20.370, "SEI-C", sei.length>1 && sei[1].detected)
-                        drawSeismic(ctx, 42.829, 20.485, "SEI-E", sei.length>2 && sei[2].detected)
-
-                        // PVO systems — corners (fixed)
-                        drawPVO(ctx, 42.840, 20.180, "PVO-01", true)
-                        drawPVO(ctx, 42.839, 20.525, "PVO-02", true)
-                        drawPVO(ctx, 42.817, 20.185, "PVO-03", false)
-                        drawPVO(ctx, 42.816, 20.520, "PVO-04", false)
-
-                        // GG systems — south edge (fixed)
-                        drawGG(ctx, 42.819, 20.225, "GG-01", true)
-                        drawGG(ctx, 42.818, 20.352, "GG-02", true)
-                        drawGG(ctx, 42.820, 20.478, "GG-03", false)
+                        // UGV route (artemides-trax A* or straight-line fallback)
+                        for (var ri = 0; ri < root.ugvsData.length; ri++) {
+                            var gv = root.ugvsData[ri]
+                            if (gv.route.length > 0) drawRoute(ctx, gv.lat, gv.lon, gv.route)
+                        }
 
                         // Vehicles — live positions from simBus
-                        var uavLat = root.uavData ? root.uavData.lat : 42.832
-                        var uavLon = root.uavData ? root.uavData.lon : 20.358
-                        var ugvLat = root.ugvData ? root.ugvData.lat : 42.826
-                        var ugvLon = root.ugvData ? root.ugvData.lon : 20.342
-                        drawUAV(ctx, uavLat, uavLon, "UAV-ALPHA")
-                        drawUGV(ctx, ugvLat, ugvLon, "UGV-BRAVO")
-
-                        // Target ground truth + trajectory toward UGV
-                        var tgtLat = root.targetData ? root.targetData.lat : 42.829
-                        var tgtLon = root.targetData ? root.targetData.lon : 20.363
-                        var alive  = root.targetData ? root.targetData.alive : true
-                        if (alive) {
-                            drawTrajectory(ctx, tgtLat, tgtLon, ugvLat, ugvLon)
-                            drawIntercept(ctx, 42.827, 20.355)
-                            drawTarget(ctx, tgtLat, tgtLon)
+                        for (var gj = 0; gj < root.ugvsData.length; gj++) {
+                            var g = root.ugvsData[gj]
+                            if (g.jamming && g.jamAim) drawJamBeam(ctx, g.lat, g.lon, g.jamAim.lat, g.jamAim.lon)
+                            if (g.lastShot) drawShot(ctx, g.lat, g.lon, g.lastShot, "#FFEB3B")
+                            drawUGV(ctx, g.lat, g.lon, g.deviceId)
+                        }
+                        // Interceptors are only visible once they leave the pad
+                        for (var uj = 0; uj < root.uavsData.length; uj++) {
+                            var u = root.uavsData[uj]
+                            if (u.airborne) drawUAV(ctx, u.lat, u.lon, u.deviceId + "  " + u.altitudeM.toFixed(0) + " m")
                         }
 
-                        // Fused track: predicted route — shown only after mission accepted
-                        if (root.missionAccepted && root.trackData && root.trackData.length > 0) {
+                        // Ground truth (debug overlay — not visible to the C2 chain)
+                        if (root.showTruth) {
+                            drawEnemyRoute(ctx)
+                            for (var gi = 0; gi < root.targetsData.length; gi++)
+                                drawTruth(ctx, root.targetsData[gi])
+                        }
+
+                        // Engagement geometry: interceptor → predicted intercept point
+                        for (var ei = 0; ei < root.engagementsData.length; ei++) {
+                            var e = root.engagementsData[ei]
+                            var iu = root.uavById(e.effector)
+                            if (e.state === "ENGAGING" && e.kind === "INTERCEPTOR" && iu && iu.airborne
+                                    && e.aimLat !== null && e.aimLat !== undefined) {
+                                drawTrajectory(ctx, iu.lat, iu.lon, e.aimLat, e.aimLon)
+                                drawIntercept(ctx, e.aimLat, e.aimLon)
+                            }
+                        }
+
+                        // Fused tracks — Kalman estimates with 60 s velocity leader
+                        for (var ti = 0; ti < root.trackData.length; ti++)
+                            drawTrack(ctx, root.trackData[ti])
+                        if (root.trackData.length > 0 && root.trackData[0].identity === "HOSTILE"
+                                && root.trackData[0].engState !== "NEUTRALIZED") {
                             var trk = root.trackData[0]
                             drawPredictedRoute(ctx, trk.lat, trk.lon, trk.headingDeg, trk.speedMs, trk.confidence)
                         }
 
+                        // MOVE: highlight the picked item
+                        if (root.editMode && root.editTool === "move" && root.editMsg && root.editMsg.picked) {
+                            var pk = root.editMsg.picked
+                            var px = lonToX(pk.lon), py = latToY(pk.lat)
+                            ctx.strokeStyle = root.pulsePhase ? "#FFEB3B" : "#FFA000"; ctx.lineWidth = 3
+                            ctx.beginPath(); ctx.arc(px, py, 16 + root.pulsePhase * 4, 0, Math.PI*2); ctx.stroke()
+                            lbl(ctx, "MOVE " + pk.label + " → click new position", px + 20, py - 14, "#FFEB3B")
+                        }
+
                         drawLegend(ctx)
+                        if (root.showDrive || (root.editMode && root.editTool === "ugv")) drawDriveLegend(ctx)
                         drawScaleBar(ctx)
                         drawNorth(ctx)
                     }
@@ -862,7 +1409,7 @@ ApplicationWindow {
 
             // ── RIGHT PANEL: alarms / tracks / actions ────────────
             Rectangle {
-                width: 280
+                width: 330
                 Layout.fillHeight: true
                 color: root.c_panel
                 border.color: "#1E3550"; border.width: 1
@@ -873,120 +1420,201 @@ ApplicationWindow {
                     contentWidth: availableWidth
 
                     ColumnLayout {
-                        width: 280
+                        width: 330
                         spacing: 0
 
-                        SectionHeader { title: "ACTIVE ALARMS" }
+                        SectionHeader { title: "THREAT PICTURE" }
 
-                        // Alarm card
                         Rectangle {
-                            width: 260; height: 110
+                            width: 310; height: 62
                             Layout.alignment: Qt.AlignHCenter
-                            color: "#2C1515"
-                            border.color: root.c_pvo; border.width: 2
-                            radius: 4
-                            ColumnLayout {
+                            color: root.threatLevel >= 3 ? "#2C1515" : root.c_card
+                            border.color: root.threatLevel >= 3 ? root.c_pvo : "#37474F"
+                            border.width: root.threatLevel >= 3 ? 2 : 1; radius: 4
+                            GridLayout {
                                 anchors { fill: parent; margins: 8 }
-                                spacing: 3
-                                Row {
-                                    spacing: 6
-                                    Rectangle { width: 8; height: 8; radius: 4
-                                                color: root.c_armed; anchors.verticalCenter: parent.verticalCenter
-                                                visible: root.pulsePhase === 0 }
-                                    Text { text: "ALM-20260321-001"; color: root.c_alarm
-                                           font { bold: true; pixelSize: 11 } }
+                                columns: 5; rowSpacing: 2; columnSpacing: 4
+                                Repeater {
+                                    model: [
+                                        { k: "HOSTILE", v: root.countIdentity("HOSTILE"), c: "#F44336" },
+                                        { k: "SUSPECT", v: root.countIdentity("SUSPECT"), c: "#FF9800" },
+                                        { k: "NEUTRAL", v: root.countIdentity("NEUTRAL"), c: "#4FC3F7" },
+                                        { k: "KILLS",   v: root.statsData.kills,          c: "#66BB6A" },
+                                        { k: "BASE HITS", v: root.statsData.baseHits + (root.statsData.assaults ? "+" + root.statsData.assaults : ""),
+                                          c: root.statsData.baseHits + root.statsData.assaults > 0 ? "#FF5252" : "#78909C" },
+                                    ]
+                                    Column {
+                                        Layout.fillWidth: true
+                                        Text { text: modelData.v; color: modelData.c
+                                               font { pixelSize: 18; bold: true }
+                                               anchors.horizontalCenter: parent.horizontalCenter }
+                                        Text { text: modelData.k; color: root.c_dim; font.pixelSize: 8
+                                               anchors.horizontalCenter: parent.horizontalCenter }
+                                    }
                                 }
-                                InfoRow { k: "Level";
-                                           v: root.threatLevel >= 3 ? "HIGH" : root.threatLevel >= 2 ? "MEDIUM" : "LOW"
-                                           vc: root.threatLevel >= 3 ? root.c_armed : root.c_deploy }
-                                InfoRow { k: "Status";      v: "OPERATOR_APPROVED"; vc: "#90CAF9" }
-                                InfoRow { k: "Target";      v: "UAV_DRONE";         vc: root.c_text }
-                                InfoRow { k: "Confidence";
-                                           v: root.trackData.length > 0 ? (root.trackData[0].confidence*100).toFixed(0) + "%" : "93%"
-                                           vc: root.c_active }
-                                InfoRow { k: "Location";
-                                           v: root.targetData ? root.targetData.lat.toFixed(4) + "°N  " + root.targetData.lon.toFixed(4) + "°E" : "42.829°N  20.363°E"
-                                           vc: root.c_text }
-                                InfoRow { k: "Time";        v: "14:32:00 UTC";      vc: root.c_dim }
                             }
                         }
 
                         Item { height: 4 }
 
-                        SectionHeader { title: "ACTIVE TRACK" }
+                        SectionHeader { title: "TRACKS  (" + root.trackData.length + ")" }
 
-                        Rectangle {
-                            width: 260; height: 90
-                            Layout.alignment: Qt.AlignHCenter
-                            color: root.c_card
-                            border.color: root.trackData.length > 0 ? "#7B1FA2" : "#37474F"
-                            border.width: 1; radius: 4
-                            ColumnLayout {
-                                anchors { fill: parent; margins: 8 }
-                                spacing: 3
-                                Text { text: root.trackData.length > 0 ? root.trackData[0].trackId : "NO TRACK"
-                                       color: root.trackData.length > 0 ? "#CE93D8" : root.c_dim
-                                       font { bold: true; pixelSize: 11 } }
-                                InfoRow { k: "Position"
-                                           v: root.trackData.length > 0 ?
-                                               root.trackData[0].lat.toFixed(4) + "°N  " + root.trackData[0].lon.toFixed(4) + "°E"
-                                               : "--"
-                                           vc: root.c_text }
-                                InfoRow { k: "Velocity"
-                                           v: root.trackData.length > 0 ?
-                                               (root.trackData[0].speedMs * 3.6).toFixed(1) + " km/h"
-                                               : "--"
-                                           vc: root.c_text }
-                                InfoRow { k: "Heading"
-                                           v: root.trackData.length > 0 ?
-                                               root.trackData[0].headingDeg.toFixed(0) + "°"
-                                               : "--"
-                                           vc: root.c_text }
-                                InfoRow { k: "Confidence"
-                                           v: root.trackData.length > 0 ?
-                                               (root.trackData[0].confidence * 100).toFixed(0) + "%"
-                                               : "--"
-                                           vc: root.c_active }
+                        Text {
+                            visible: root.trackData.length === 0
+                            Layout.leftMargin: 12
+                            text: "No confirmed tracks"
+                            color: root.c_dim; font.pixelSize: 10
+                        }
+
+                        Repeater {
+                            model: root.trackData
+                            Rectangle {
+                                width: 310; height: 70
+                                Layout.alignment: Qt.AlignHCenter
+                                color: root.c_card; radius: 4
+                                border.color: root.trackColor(modelData)
+                                border.width: modelData.identity === "HOSTILE" && modelData.engState !== "NEUTRALIZED" ? 2 : 1
+                                ColumnLayout {
+                                    anchors { fill: parent; margins: 6 }
+                                    spacing: 1
+                                    RowLayout {
+                                        Text { text: modelData.trackId; color: root.trackColor(modelData)
+                                               font { bold: true; pixelSize: 11 } }
+                                        Text { text: modelData.identity + " / " + modelData.threatLevel
+                                               color: root.trackColor(modelData); font.pixelSize: 9 }
+                                        Item { Layout.fillWidth: true }
+                                        Text { text: modelData.status; color: root.c_dim; font.pixelSize: 8 }
+                                    }
+                                    InfoRow { k: "Kinematics"
+                                              v: (modelData.speedMs*3.6).toFixed(0) + " km/h  " +
+                                                 modelData.headingDeg.toFixed(0) + "°  " +
+                                                 modelData.altitudeM.toFixed(0) + " m  ±" + modelData.sigmaM.toFixed(0) + " m" }
+                                    InfoRow { k: "Assessment"; v: modelData.reason
+                                              vc: modelData.insideZone ? root.c_armed : root.c_text }
+                                    InfoRow { k: "Sensors"
+                                              v: modelData.sources.length + " · " + modelData.sources.join(", ") +
+                                                 (modelData.objClass !== "UNKNOWN" ? "  [" + modelData.objClass + "]" : "")
+                                              vc: root.c_dim }
+                                }
                             }
                         }
 
                         Item { height: 4 }
 
-                        SectionHeader { title: "TRAJECTORY" }
+                        SectionHeader { title: "ENGAGEMENTS  —  " + (root.autoRoe ? "AUTO-ROE (zone)" : "OPERATOR APPROVAL") }
 
-                        Rectangle {
-                            width: 260; height: 72
-                            Layout.alignment: Qt.AlignHCenter
-                            color: root.c_card; border.color: "#9E9E9E"; border.width: 1; radius: 4
-                            ColumnLayout {
-                                anchors { fill: parent; margins: 8 }
-                                spacing: 3
-                                Text { text: "TRAJ-20260321-001"; color: root.c_dim
-                                       font { bold: true; pixelSize: 11 } }
-                                InfoRow { k: "Intercept"; v: "42.827°N  20.355°E"; vc: "#FF9800" }
-                                InfoRow { k: "Est. ETA";  v: "14:35:00 UTC";       vc: root.c_text }
+                        Text {
+                            visible: root.engagementsData.length === 0
+                            Layout.leftMargin: 12
+                            text: "No engagements"
+                            color: root.c_dim; font.pixelSize: 10
+                        }
+
+                        Repeater {
+                            model: root.engagementsData.slice(0, 6)
+                            Rectangle {
+                                width: 310; height: modelData.active ? 84 : 58
+                                Layout.alignment: Qt.AlignHCenter
+                                color: modelData.state === "PROPOSED" ? "#2A2410" : "#1A1A2E"
+                                border.color: root.engStateColor(modelData.state)
+                                border.width: modelData.active ? 2 : 1; radius: 4
+                                ColumnLayout {
+                                    anchors { fill: parent; margins: 6 }
+                                    spacing: 1
+                                    RowLayout {
+                                        Text { text: modelData.engId + " → " + modelData.trackId; color: root.c_warn
+                                               font { bold: true; pixelSize: 11 } }
+                                        Item { Layout.fillWidth: true }
+                                        Text { text: modelData.state; color: root.engStateColor(modelData.state)
+                                               font { bold: true; pixelSize: 10 } }
+                                    }
+                                    InfoRow { k: modelData.state === "PROPOSED" ? "Recommend" : "Effector"
+                                              v: (modelData.effector || "none available") +
+                                                 (modelData.kind ? "  (" + modelData.kind + ")" : "") +
+                                                 (typeof modelData.tGo === "number" && modelData.active ? "  t-go " + modelData.tGo.toFixed(0) + " s" : "")
+                                              vc: modelData.effector ? root.c_text : root.c_armed }
+                                    InfoRow { visible: !modelData.active || modelData.approvedBy !== ""
+                                              k: modelData.active ? "Approved" : "Result"
+                                              v: modelData.active ? modelData.approvedBy : modelData.result + "  @T+" + modelData.endedT
+                                              vc: root.c_dim }
+                                    Row {
+                                        visible: modelData.active
+                                        spacing: 6
+                                        ActionButton {
+                                            visible: modelData.state === "PROPOSED"
+                                            label: "✔ ENGAGE"; base: "#2E7D32"; edge: "#4CAF50"
+                                            enabled: modelData.effector !== ""
+                                            onClicked: simBus.approveEngagement(modelData.engId)
+                                        }
+                                        ActionButton {
+                                            visible: modelData.state === "PROPOSED"
+                                            label: "✘ DENY"; base: "#C62828"; edge: "#EF5350"
+                                            onClicked: simBus.denyEngagement(modelData.engId)
+                                        }
+                                        ActionButton {
+                                            visible: modelData.state === "APPROVED" || modelData.state === "ENGAGING"
+                                            label: "⏹ ABORT"; base: "#6A1B9A"; edge: "#CE93D8"
+                                            onClicked: simBus.abortEngagement(modelData.engId)
+                                        }
+                                    }
+                                }
                             }
                         }
 
                         Item { height: 4 }
 
-                        SectionHeader { title: "DEFENCE ACTION" }
+                        SectionHeader { title: "EVENT LOG" }
 
                         Rectangle {
-                            width: 260; height: 108
+                            width: 310; height: 150
                             Layout.alignment: Qt.AlignHCenter
-                            color: "#1A1A2E"; border.color: root.c_deploy; border.width: 2; radius: 4
+                            color: "#0A1622"; border.color: "#1E3550"; radius: 4
+                            clip: true
+                            Column {
+                                anchors { fill: parent; margins: 6 }
+                                spacing: 2
+                                Repeater {
+                                    model: root.eventsData.slice(0, 11)
+                                    Text {
+                                        width: 298
+                                        elide: Text.ElideRight
+                                        text: "T+" + modelData.t.toFixed(0) + "  " + modelData.text
+                                        color: modelData.level === "KILL" ? "#66BB6A" :
+                                               modelData.level === "ALERT" ? "#FF8A80" :
+                                               modelData.level === "WARN" ? root.c_warn : root.c_dim
+                                        font { pixelSize: 9; family: "monospace" }
+                                    }
+                                }
+                            }
+                        }
+
+                        Item { height: 4 }
+
+                        SectionHeader { title: "ARTEMIDES-TRAX LINK" }
+
+                        Rectangle {
+                            width: 310; height: 78
+                            Layout.alignment: Qt.AlignHCenter
+                            color: root.c_card; radius: 4
+                            border.color: !root.linkData || !root.linkData.enabled ? "#37474F"
+                                          : root.linkData.errors > 0 && root.linkData.ok === 0 ? root.c_armed : root.c_active
                             ColumnLayout {
-                                anchors { fill: parent; margins: 8 }
-                                spacing: 3
-                                Text { text: "ACT-20260321-001"; color: root.c_warn
-                                       font { bold: true; pixelSize: 11 } }
-                                InfoRow { k: "Type";      v: "INTERCEPT";          vc: root.c_warn }
-                                InfoRow { k: "Status";    v: "DEPLOYING";          vc: root.c_deploy }
-                                InfoRow { k: "Target";    v: "TGT-001";            vc: root.c_text }
-                                InfoRow { k: "System";    v: "UGV-BRAVO-002";      vc: root.c_ugv }
-                                InfoRow { k: "Pos";       v: "42.827°N  20.355°E"; vc: root.c_text }
-                                InfoRow { k: "Approved";  v: "jovic.m  [OP-0042]"; vc: root.c_dim }
+                                anchors { fill: parent; margins: 6 }
+                                spacing: 1
+                                InfoRow { k: "Status"
+                                          v: !root.linkData || !root.linkData.enabled ? "OFFLINE (ARTEMIDES_URL not set)"
+                                             : (root.linkData.user ? "CONNECTED as " + root.linkData.user
+                                                : root.linkData.ok > 0 ? "CONNECTED (guest)" : "CONNECTING…")
+                                          vc: root.linkData && root.linkData.enabled ? root.c_active : root.c_dim }
+                                InfoRow { k: "Drivability"; v: root.drivData ? root.drivData.status : "--" }
+                                InfoRow { k: "Publish"
+                                          v: root.linkData ? ("telemetry " + (root.linkData.telemetry ? "ON" : "off") +
+                                                              " · threats " + (root.linkData.publishThreats ? "ON" : "off")) : "--"
+                                          vc: root.c_dim }
+                                InfoRow { k: "Calls"
+                                          v: root.linkData ? (root.linkData.ok + " ok · " + root.linkData.errors + " err" +
+                                                              (root.linkData.last_error ? " · " + root.linkData.last_error : "")) : "--"
+                                          vc: root.linkData && root.linkData.errors > 0 ? root.c_warn : root.c_dim }
                             }
                         }
 
@@ -994,26 +1622,18 @@ ApplicationWindow {
 
                         SectionHeader { title: "SENSOR CONFIDENCE" }
 
-                        ConfBar { label: "Acoustic  (x3)"
+                        ConfBar { label: "Acoustic"
                                    value: root.acousticData.length > 0 ?
                                        Math.max(root.acousticData[0].confidence,
                                                 root.acousticData.length>1 ? root.acousticData[1].confidence : 0,
                                                 root.acousticData.length>2 ? root.acousticData[2].confidence : 0) : 0.0
                                    barColor: root.c_sensor }
-                        ConfBar { label: "Seismic   (x3)"
+                        ConfBar { label: "Seismic"
                                    value: root.seismicData.length > 0 ?
                                        Math.max(root.seismicData[0].confidence,
                                                 root.seismicData.length>1 ? root.seismicData[1].confidence : 0,
                                                 root.seismicData.length>2 ? root.seismicData[2].confidence : 0) : 0.0
                                    barColor: root.c_warn }
-                        ConfBar { label: "Radar  UAV/UGV"
-                                   value: Math.max(
-                                       root.uavData && root.uavData.radar ? root.uavData.radar.confidence : 0,
-                                       root.ugvData && root.ugvData.radar ? root.ugvData.radar.confidence : 0)
-                                   barColor: "#80CBC4" }
-                        ConfBar { label: "Camera UAV"
-                                   value: root.uavData && root.uavData.camera ? root.uavData.camera.confidence : 0.0
-                                   barColor: "#80DEEA" }
                         ConfBar { label: "Fused  output"
                                    value: root.trackData.length > 0 ? root.trackData[0].confidence : 0.0
                                    barColor: root.c_uav }
@@ -1027,7 +1647,7 @@ ApplicationWindow {
         // ── BOTTOM ACTION BAR ─────────────────────────────────────
         Rectangle {
             Layout.fillWidth: true
-            height: 64
+            height: 72
             color: "#0A1622"
             border.color: root.c_border; border.width: 1
 
@@ -1036,44 +1656,41 @@ ApplicationWindow {
                 spacing: 12
 
                 Text {
-                    text: "● MISSION ACTIVE  |  ALM-001: HIGH  |  ACT-001: DEPLOYING"
-                    color: root.c_active; font { pixelSize: 11; bold: true }
+                    text: "● C-UAS ACTIVE  |  TRACKS " + root.trackData.length +
+                          "  |  HOSTILE " + root.countIdentity("HOSTILE") +
+                          "  |  ENGAGING " + root.countEng("ENGAGING") +
+                          "  |  NEUTRALIZED " + root.countEng("NEUTRALIZED") +
+                          "  |  UAV airborne " + root.countAirborne() + "/" + root.uavsData.length
+                    color: root.threatLevel >= 3 ? "#FF8A80" : root.c_active
+                    font { pixelSize: 11; bold: true }
+                    Layout.fillWidth: true
+                    elide: Text.ElideRight
                 }
 
-                Item { Layout.fillWidth: true }
-
-                // Approve / Accept Mission
+                // Engage most urgent proposed engagement
                 Column {
                     spacing: 4
                     Rectangle {
-                        width: 166; height: 32; radius: 4
-                        color: root.missionAccepted ? "#0D3E1A" :
-                               (hov.containsMouse && root.missionReady ? "#1B5E20" : "#2E7D32")
-                        opacity: root.missionReady || root.missionAccepted ? 1.0 : 0.4
+                        width: 170; height: 32; radius: 4
+                        color: hov.containsMouse && root.missionReady ? "#1B5E20" : "#2E7D32"
+                        opacity: root.missionReady ? 1.0 : 0.4
                         border.color: "#4CAF50"; border.width: 1
                         Text { anchors.centerIn: parent
-                               text: root.missionAccepted ? "✔  MISSION ACCEPTED" : "✔  ACCEPT MISSION"
+                               text: root.pendingEng ? "✔  ENGAGE " + root.pendingEng.trackId : "✔  ENGAGE"
                                color: "#FFFFFF"; font { bold: true; pixelSize: 11 } }
                         HoverHandler { id: hov }
                         TapHandler {
-                            onTapped: {
-                                if (!root.missionAccepted && root.missionReady) {
-                                    root.missionAccepted = true
-                                    simBus.acceptMission()
-                                }
-                            }
+                            onTapped: if (root.missionReady) simBus.approveEngagement(root.pendingEng.engId)
                         }
                     }
-                    // Prerequisites checklist
-                    Column {
-                        spacing: 1
-                        visible: !root.missionAccepted
+                    Grid {
+                        columns: 2; columnSpacing: 10; rowSpacing: 1
                         Repeater {
                             model: [
-                                { label: "Track confirmed",   ok: root.prereqTrack },
-                                { label: "Confidence ≥ 50%",  ok: root.prereqConfidence },
-                                { label: "Threat ≥ MEDIUM",   ok: root.prereqThreat },
-                                { label: "UAV ready (bat>20)",ok: root.prereqUav },
+                                { label: "Confirmed track",       ok: root.prereqTrack },
+                                { label: "Declared HOSTILE",      ok: root.prereqHostile },
+                                { label: "Engagement proposed",   ok: root.prereqPending },
+                                { label: "Effector available",    ok: root.prereqEffector },
                             ]
                             Row {
                                 spacing: 4
@@ -1090,49 +1707,77 @@ ApplicationWindow {
                             }
                         }
                     }
-                    Text {
-                        visible: root.missionAccepted
-                        width: 166
-                        horizontalAlignment: Text.AlignHCenter
-                        text: "UAV intercept active"
-                        color: root.c_active
-                        font.pixelSize: 9
-                    }
                 }
 
                 // Deny
                 Rectangle {
-                    width: 140; height: 32; radius: 4
+                    width: 90; height: 32; radius: 4
+                    opacity: root.pendingEng ? 1.0 : 0.4
                     color: hovD.containsMouse ? "#B71C1C" : "#C62828"
                     border.color: "#EF5350"; border.width: 1
-                    Text { anchors.centerIn: parent; text: "✘  DENY ACTION"
+                    Text { anchors.centerIn: parent; text: "✘  DENY"
                            color: "#FFFFFF"; font { bold: true; pixelSize: 11 } }
                     HoverHandler { id: hovD }
-                    TapHandler { onTapped: console.log("DENY ACTION clicked") }
+                    TapHandler { onTapped: if (root.pendingEng) simBus.denyEngagement(root.pendingEng.engId) }
                 }
 
                 Rectangle { width: 1; height: 28; color: root.c_border; opacity: 0.5 }
 
-                // Standby All
+                // Auto-ROE toggle — weapons free inside the restricted zone
                 Rectangle {
-                    width: 130; height: 32; radius: 4
-                    color: hovS.containsMouse ? "#1565C0" : "#1976D2"
-                    border.color: "#42A5F5"; border.width: 1
-                    Text { anchors.centerIn: parent; text: "⏸  STANDBY ALL"
+                    width: 136; height: 32; radius: 4
+                    color: root.autoRoe ? (hovS.containsMouse ? "#E65100" : "#EF6C00")
+                                        : (hovS.containsMouse ? "#1565C0" : "#1976D2")
+                    border.color: root.autoRoe ? "#FFB74D" : "#42A5F5"; border.width: 1
+                    Text { anchors.centerIn: parent
+                           text: root.autoRoe ? "⚠  AUTO-ROE: ON" : "👤  AUTO-ROE: OFF"
                            color: "#FFFFFF"; font { bold: true; pixelSize: 11 } }
                     HoverHandler { id: hovS }
-                    TapHandler { onTapped: console.log("STANDBY ALL clicked") }
+                    TapHandler { onTapped: simBus.setAutoRoe(!root.autoRoe) }
                 }
 
-                // Abort Mission
+                // PVO weapons free / hold fire
                 Rectangle {
-                    width: 148; height: 32; radius: 4
+                    width: 110; height: 32; radius: 4
+                    property bool on: root.pvoData ? root.pvoData.enabled : true
+                    color: on ? "#B71C1C" : "#37474F"
+                    border.color: on ? "#EF9A9A" : "#78909C"; border.width: 1
+                    Text { anchors.centerIn: parent; text: parent.on ? "PVO: AUTO" : "PVO: HOLD"
+                           color: "#FFFFFF"; font { bold: true; pixelSize: 11 } }
+                    TapHandler { onTapped: simBus.setPvoEnabled(!parent.on) }
+                }
+
+                // Abort all
+                Rectangle {
+                    width: 110; height: 32; radius: 4
                     color: hovA.containsMouse ? "#4A1942" : "#6A1B9A"
                     border.color: "#CE93D8"; border.width: 1
-                    Text { anchors.centerIn: parent; text: "⏹  ABORT MISSION"
+                    Text { anchors.centerIn: parent; text: "⏹  ABORT ALL"
                            color: "#FFFFFF"; font { bold: true; pixelSize: 11 } }
                     HoverHandler { id: hovA }
-                    TapHandler { onTapped: console.log("ABORT MISSION clicked") }
+                    TapHandler { onTapped: simBus.abortAll() }
+                }
+
+                // Scenario editor
+                Rectangle {
+                    width: 84; height: 32; radius: 4
+                    color: root.editMode ? "#E65100" : (hovE.containsMouse ? "#37474F" : "#263238")
+                    border.color: root.editMode ? "#FFB74D" : "#78909C"; border.width: 1
+                    Text { anchors.centerIn: parent; text: root.editMode ? "✎ EDITING" : "✎  EDIT"
+                           color: "#FFFFFF"; font { bold: true; pixelSize: 11 } }
+                    HoverHandler { id: hovE }
+                    TapHandler { onTapped: simBus.setEditMode(!root.editMode) }
+                }
+
+                // Restart scenario
+                Rectangle {
+                    width: 84; height: 32; radius: 4
+                    color: hovR.containsMouse ? "#37474F" : "#263238"
+                    border.color: "#78909C"; border.width: 1
+                    Text { anchors.centerIn: parent; text: "↺  RESET"
+                           color: "#FFFFFF"; font { bold: true; pixelSize: 11 } }
+                    HoverHandler { id: hovR }
+                    TapHandler { onTapped: simBus.reset() }
                 }
             }
         }
@@ -1175,8 +1820,10 @@ ApplicationWindow {
         property real   battery:     100
         property string detail1:     ""
         property string detail2:     ""
+        property string actionLabel: ""
+        signal action()
         Layout.fillWidth: true
-        height: 82
+        height: 96
 
         Rectangle {
             anchors { fill: parent; margins: 5 }
@@ -1211,7 +1858,19 @@ ApplicationWindow {
                 }
 
                 Text { text: detail1; color: root.c_dim; font.pixelSize: 9 }
-                Text { text: detail2; color: root.c_dim; font.pixelSize: 9 }
+                RowLayout {
+                    Layout.fillWidth: true
+                    Text { text: detail2; color: root.c_dim; font.pixelSize: 9
+                           Layout.fillWidth: true; elide: Text.ElideRight }
+                    ActionButton {
+                        visible: actionLabel !== ""
+                        width: 64; height: 16
+                        label: actionLabel
+                        base: actionLabel.indexOf("LAUNCH") >= 0 ? "#2E7D32" : "#455A64"
+                        edge: actionLabel.indexOf("LAUNCH") >= 0 ? "#66BB6A" : "#90A4AE"
+                        onClicked: action()
+                    }
+                }
             }
         }
     }
@@ -1298,6 +1957,21 @@ ApplicationWindow {
                 }
             }
         }
+    }
+
+    component ActionButton: Rectangle {
+        property string label: ""
+        property color  base:  "#2E7D32"
+        property color  edge:  "#4CAF50"
+        signal clicked()
+        width: 92; height: 22; radius: 3
+        opacity: enabled ? 1.0 : 0.4
+        color: abHov.containsMouse && enabled ? Qt.darker(base, 1.3) : base
+        border.color: edge; border.width: 1
+        Text { anchors.centerIn: parent; text: parent.label
+               color: "#FFFFFF"; font { bold: true; pixelSize: 10 } }
+        HoverHandler { id: abHov }
+        TapHandler { onTapped: if (parent.enabled) parent.clicked() }
     }
 
     component InfoRow: Item {

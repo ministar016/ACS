@@ -9,7 +9,7 @@ Simple visibility model:
 from __future__ import annotations
 import random
 from ..models import CameraDetection, SensorStatus
-from ..target import FakeTarget
+from ..target import AerialTarget
 
 
 _VEHICLE_SIZE_M  = 4.0     # approximate target vehicle length (m)
@@ -44,7 +44,7 @@ class CameraSensor:
         self._plat_lon     = lon
         self._plat_heading = heading_deg
 
-    def sample(self, target: FakeTarget, timestamp: float) -> CameraDetection:
+    def sample(self, target: AerialTarget, timestamp: float) -> CameraDetection:
         import math
         dist_m   = target.distance_to_m(self._plat_lat, self._plat_lon)
         bearing  = target.bearing_from_m(self._plat_lat, self._plat_lon)
@@ -55,6 +55,7 @@ class CameraSensor:
 
         in_fov   = abs((rel_az + 180) % 360 - 180) < _FOV_DEG / 2
         detected = (
+            target.alive and
             dist_m <= _MAX_RANGE_M and
             in_fov and
             ang_size_deg >= _DETECT_ANG_DEG and
@@ -78,7 +79,7 @@ class CameraSensor:
         return CameraDetection(
             sensor_id            = self.sensor_id,
             timestamp            = timestamp,
-            object_class         = "GROUND_VEHICLE" if detected else "UNKNOWN",
+            object_class         = getattr(target, "drone_class", "UAV") if detected else "UNKNOWN",
             confidence           = round(conf if detected else 0.0, 4),
             estimated_distance_m = round(d_meas, 1),
             bearing_deg          = round(bearing, 2),

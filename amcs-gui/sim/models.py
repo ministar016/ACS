@@ -141,6 +141,19 @@ class Track:
     confidence:      float
     threat_level:    ThreatLevel
     sensor_sources:  List[str] = field(default_factory=list)  # which sensors contributed
+    # ── C-UAS extensions (tracker / threat evaluation) ──
+    status:          str   = "CONFIRMED"      # TENTATIVE | CONFIRMED | COASTING
+    identity:        str   = "UNKNOWN"        # UNKNOWN | NEUTRAL | SUSPECT | HOSTILE
+    altitude_m:      float = 0.0
+    pos_sigma_m:     float = 0.0              # 1σ horizontal position uncertainty
+    inside_zone:     bool  = False
+    time_to_entry_s: Optional[float] = None
+    cpa_asset_m:     float = 0.0
+    threat_reason:   str   = ""
+    object_class:    str   = "UNKNOWN"
+    engagement_id:   Optional[str] = None
+    engagement_state: Optional[str] = None
+    domain:          str = "AIR"              # AIR | GROUND | UNKNOWN
 
 
 # ── Scenario snapshot (one simulation tick) ────────────────────────────────────
@@ -151,7 +164,11 @@ class ScenarioSnapshot:
     target_position:     GeoCoord          # ground truth (not observable!)
     acoustic_readings:   List[AcousticReading]
     seismic_readings:    List[SeismicReading]
-    uav_telemetry:       UAVTelemetry
-    ugv_telemetry:       UGVTelemetry
+    uavs:                List[UAVTelemetry]   # interceptors (incl. idle on the pad)
+    ugvs:                List[UGVTelemetry]
     tracks:              List[Track]        # fused output
     threat_level:        ThreatLevel
+    targets:             list = field(default_factory=list)   # ground truth, all drones
+    engagements:         list = field(default_factory=list)   # Engagement records
+    base_hits:           int  = 0      # drones that reached the protected asset
+    assaults:            int  = 0      # enemy vehicles that reached their objective

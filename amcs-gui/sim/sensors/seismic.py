@@ -7,20 +7,23 @@ Ground vibration amplitude from a vehicle is empirically modelled as:
   A(d) = A_ref / d^1.5          (surface Rayleigh-wave attenuation)
 
 A_ref  = 0.05 g at 1 m (tracked/wheeled heavy vehicle)
-Detection threshold  = 0.000002 g  (≈ ≤700 m for this target weight class)
+Detection threshold  = 7e-8 g on a buried geophone array → ≈ 8 km for this
+weight class (5–10 km depending on noise), bearing from the array with
+~8° σ at maximum range.  Only vehicles on the ground couple into the soil.
 """
 from __future__ import annotations
 import math
 import random
 from ..models import SeismicReading, SensorStatus
-from ..target import FakeTarget
+from ..target import AerialTarget
 
 
 _A_REF_G      = 0.05
 _D_REF_M      = 1.0
-_DETECT_THR_G = 0.000002   # 0.002 mg  → ~700 m range
-_NOISE_STD_G  = 0.0000002
-_MAX_RANGE_M  = 800        # practical seismic range
+_DETECT_THR_G = 7e-8       # → ~8 km range
+_NOISE_STD_G  = 1e-8
+_MAX_RANGE_M  = 10_000     # practical seismic range
+_GROUND_ALT_M = 5.0        # above this the target is airborne
 
 
 class SeismicSensor:
@@ -37,7 +40,7 @@ class SeismicSensor:
         self._rng      = random.Random(seed)
         self.status    = SensorStatus.ACTIVE
 
-    def sample(self, target: FakeTarget, timestamp: float) -> SeismicReading:
+    def sample(self, target: AerialTarget, timestamp: float) -> SeismicReading:
         dist_m = target.distance_to_m(self._lat, self._lon)
 
         amp_g = self._amplitude(dist_m)
@@ -47,12 +50,15 @@ class SeismicSensor:
         bearing = (target.bearing_from_m(self._lat, self._lon) + bearing_noise) % 360
 
         conf     = max(0.0, min(1.0, 1.0 - dist_m / _MAX_RANGE_M + self._rng.gauss(0.0, 0.04)))
-        detected = amp_g >= _DETECT_THR_G and dist_m <= _MAX_RANGE_M
+        # Airborne targets do not couple into the ground — only a drone that
+        # has been forced down (or a ground vehicle) is seismically visible.
+        on_ground = target.position.alt < _GROUND_ALT_M
+        detected = target.alive and on_ground and amp_g >= _DETECT_THR_G and dist_m <= _MAX_RANGE_M
 
         return SeismicReading(
             sensor_id            = self.sensor_id,
             timestamp            = timestamp,
-            amplitude_g          = round(amp_g, 7),
+            amplitude_g          = round(amp_g, 10),
             estimated_bearing    = round(bearing, 1),
             detection_confidence = round(conf, 4),
             target_detected      = detected,

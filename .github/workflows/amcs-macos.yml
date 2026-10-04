@@ -1,0 +1,68 @@
+name: AMCS macOS app
+
+# Builds AMCS.app + DMG on GitHub's macOS runners (a Mac app cannot be built on Linux).
+# Every push to main that touches amcs-gui/ → DMG as a workflow artifact;
+# a tag amcs-v* (e.g. amcs-v1.0.0) → DMG attached to a GitHub release.
+on:
+  push:
+    branches: [main]
+    paths: ["amcs-gui/**", ".github/workflows/amcs-macos.yml"]
+    tags: ["amcs-v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write            # release upload on tags
+
+jobs:
+  build:
+    name: macOS ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: ${{ matrix.optional }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: macos-latest,   arch: arm64,  optional: false }   # Apple Silicon
+          - { runner: macos-15-intel, arch: x86_64, optional: true }    # Intel Macs
+    defaults:
+      run:
+        working-directory: amcs-gui
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Tests (headless, offline)
+        env:
+          QT_QPA_PLATFORM: offscreen
+          ARTEMIDES_URL: ""
+        run: |
+          python -m pip install -r requirements.txt
+          python -m unittest discover -s tests -v
+
+      - name: Build AMCS.app + DMG
+        run: bash packaging/build_macos.sh
+
+      - name: Smoke test the bundle
+        env:
+          QT_QPA_PLATFORM: offscreen
+          ARTEMIDES_URL: ""
+        run: |
+          ( ./dist/AMCS.app/Contents/MacOS/AMCS & echo $! > app.pid )
+          sleep 15
+          kill -0 "$(cat app.pid)"            # still running → QML loaded, sim ticking
+          kill "$(cat app.pid)"
+          cat ~/Library/Logs/AMCS/amcs.log
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AMCS-macOS-${{ matrix.arch }}
+          path: amcs-gui/dist/*.dmg
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/amcs-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: amcs-gui/dist/*.dmg
